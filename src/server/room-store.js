@@ -59,6 +59,7 @@ function createRoomStore() {
         isOwner: true,
         isStoryteller: isStoryteller(room, client)
       },
+      balance: buildBalanceSnapshot(room),
       game: deepClone(room.game)
     };
   }
@@ -194,6 +195,60 @@ function createGame() {
     rooms: [],
     log: []
   };
+}
+
+function buildBalanceSnapshot(room) {
+  const players = room.game.players;
+  const alive = players.filter((player) => player.alive);
+  const roleTeamCounts = countRoleTeams(room, players);
+  const aliveRoleTeamCounts = countRoleTeams(room, alive);
+  const goodAliveCount = alive.filter((player) => player.alignment === "good").length;
+  const evilAliveCount = alive.filter((player) => player.alignment === "evil").length;
+  const demonAlive = alive.some((player) => roleById(room, player.roleId)?.team === "demon");
+  const voteThreshold = alive.length ? Math.ceil(alive.length / 2) : 0;
+  return {
+    phase: phaseLabel(room.game),
+    playerCount: players.length,
+    aliveCount: alive.length,
+    deadCount: players.length - alive.length,
+    goodAliveCount,
+    evilAliveCount,
+    demonAlive,
+    voteThreshold,
+    roleTeamCounts,
+    aliveRoleTeamCounts,
+    recentExecutionsOrDeaths: room.game.log
+      .filter((entry) => ["处决", "小恶魔", "胜负", "阶段"].includes(entry.type))
+      .slice(-8)
+      .map((entry) => ({ type: entry.type, text: entry.text })),
+    nominationsToday: room.game.nominations.map((item) => ({
+      nominee: nameOf(room, item.nomineeId),
+      votes: item.votes.length,
+      threshold: item.threshold,
+      phaseLabel: item.phaseLabel
+    })),
+    balancePressure: describeBalancePressure(alive.length, goodAliveCount, evilAliveCount, demonAlive)
+  };
+}
+
+function countRoleTeams(room, players) {
+  return players.reduce(
+    (acc, player) => {
+      const team = roleById(room, player.roleId)?.team || "unknown";
+      acc[team] = (acc[team] || 0) + 1;
+      return acc;
+    },
+    { townsfolk: 0, outsider: 0, minion: 0, demon: 0, unknown: 0 }
+  );
+}
+
+function describeBalancePressure(aliveCount, goodAliveCount, evilAliveCount, demonAlive) {
+  if (!aliveCount) return "未开局或无人存活。";
+  if (!demonAlive) return "恶魔已死亡或未发牌；除特殊规则外游戏应接近善良胜利。";
+  if (aliveCount <= 3) return "终局压力高，裁量要避免单方无推理空间地直接结束。";
+  if (evilAliveCount <= 1 && aliveCount >= 6) return "邪恶存活压力偏高，裁量可适度保留邪恶周旋空间。";
+  if (goodAliveCount <= evilAliveCount + 1) return "善良存活压力偏高，裁量可适度提供可推理线索。";
+  return "局势未明显失衡，优先维持规则一致性和玩家可推理性。";
 }
 
 function mutateRoom(room, client, type, payload) {

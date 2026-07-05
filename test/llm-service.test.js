@@ -41,6 +41,7 @@ test("LLM service returns promptOnly when provider config is incomplete", async 
 
   assert.equal(result.promptOnly, true);
   assert.match(result.prompt, /完整房间上下文 JSON/);
+  assert.match(result.prompt, /balancePressure/);
   assert.match(result.prompt, /下一步怎么主持/);
 });
 
@@ -97,6 +98,115 @@ test("LLM service merges ignored local config overrides", async () => {
   assert.equal(result.text, "local-ok");
   assert.equal(calls[0].url, "http://deepseek.test/chat");
   assert.equal(calls[0].options.headers.Authorization, "Bearer sk-local-test");
+});
+
+test("LLM storyteller output is redacted for a player owner in LLM mode", async () => {
+  const configPath = writeTempConfig({
+    providers: {
+      deepseek: {
+        type: "openai-compatible",
+        endpoint: "http://deepseek.test/chat",
+        apiKey: "sk-test",
+        defaultModel: "deepseek-chat"
+      }
+    },
+    defaults: {
+      storytellerProvider: "deepseek",
+      aiPlayerProvider: "deepseek"
+    },
+    storyteller: {
+      providerId: "deepseek",
+      model: "deepseek-chat"
+    }
+  });
+  const store = createRoomStore();
+  const host = store.createRoom("Redaction", "Host");
+  await Promise.all(["Ada", "Ben", "Cy", "Dee"].map((name) => Promise.resolve(store.joinRoom(host.roomId, name))));
+
+  const hostState = store.getState(host.roomId, host.clientId, host.token);
+  const [owner, ada, ben] = hostState.game.players;
+  store.applyAction(host.roomId, host.clientId, host.token, "updatePlayer", {
+    playerId: owner.id,
+    patch: { roleId: "chef", shownRoleId: "chef", alignment: "good" }
+  });
+  store.applyAction(host.roomId, host.clientId, host.token, "updatePlayer", {
+    playerId: ada.id,
+    patch: { roleId: "imp", shownRoleId: "imp", alignment: "evil" }
+  });
+  store.applyAction(host.roomId, host.clientId, host.token, "updatePlayer", {
+    playerId: ben.id,
+    patch: { roleId: "washerwoman", shownRoleId: "washerwoman", alignment: "good" }
+  });
+  store.applyAction(host.roomId, host.clientId, host.token, "setMode", { mode: "llm" });
+
+  const service = createLlmService({
+    configPath,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: "Ada（小恶魔）压力很大，Ben 是洗衣妇；Host 的厨师信息可以作为公开讨论点。"
+            }
+          }
+        ]
+      })
+    })
+  });
+
+  const result = await service.complete(store, host.roomId, host.clientId, host.token, {
+    kind: "storyteller-advice",
+    instruction: "给玩家房主可见建议"
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.redacted, true);
+  assert.match(result.text, /Ada（某隐藏角色）/);
+  assert.doesNotMatch(result.text, /小恶魔|洗衣妇/);
+  assert.match(result.text, /厨师/);
+});
+
+test("LLM mode player owner cannot export a hidden grimoire prompt when provider is incomplete", async () => {
+  const configPath = writeTempConfig({
+    providers: {
+      deepseek: {
+        type: "openai-compatible",
+        endpoint: "http://deepseek.test/chat",
+        apiKeyEnv: "BLOOD_TEST_DEEPSEEK_KEY_DO_NOT_SET",
+        defaultModel: "deepseek-chat"
+      }
+    },
+    defaults: {
+      storytellerProvider: "deepseek",
+      aiPlayerProvider: "deepseek"
+    },
+    storyteller: {
+      providerId: "deepseek",
+      model: "deepseek-chat"
+    }
+  });
+  const store = createRoomStore();
+  const host = store.createRoom("Prompt Redaction", "Host");
+  await Promise.all(["Ada", "Ben", "Cy", "Dee"].map((name) => Promise.resolve(store.joinRoom(host.roomId, name))));
+  store.applyAction(host.roomId, host.clientId, host.token, "autoBag", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "dealRoles", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "setMode", { mode: "llm" });
+
+  const service = createLlmService({
+    configPath,
+    fetchImpl: async () => {
+      throw new Error("fetch should not be called without an API key");
+    }
+  });
+  const result = await service.complete(store, host.roomId, host.clientId, host.token, {
+    kind: "storyteller-advice",
+    instruction: "复制 prompt"
+  });
+
+  assert.equal(result.promptOnly, true);
+  assert.equal(result.messages.length, 0);
+  assert.doesNotMatch(result.prompt, /完整房间上下文 JSON|roleId|shownRoleId/);
 });
 
 test("AI player LLM calls can route by role provider and remain context-isolated", async () => {

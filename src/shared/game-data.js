@@ -34,8 +34,64 @@
     15: { townsfolk: 9, outsider: 2, minion: 3, demon: 1 }
   };
 
+  const TEAM_AVATAR_COLORS = {
+    townsfolk: { background: "#2f5f73", accent: "#8ed0e0" },
+    outsider: { background: "#5f4b7a", accent: "#d7b8ff" },
+    minion: { background: "#6f354f", accent: "#f0a0bd" },
+    demon: { background: "#743126", accent: "#ffb09b" },
+    traveler: { background: "#5f5832", accent: "#ecd77a" },
+    fabled: { background: "#345f4a", accent: "#99dfba" }
+  };
+
+  const ROLE_AVATARS = {
+    washerwoman: { symbol: "洗", background: "#2d6172", accent: "#a7d9e6" },
+    librarian: { symbol: "书", background: "#375d79", accent: "#bfd7ff" },
+    investigator: { symbol: "查", background: "#284f68", accent: "#8fc5ff" },
+    chef: { symbol: "厨", background: "#6a4f2f", accent: "#f2c178" },
+    empath: { symbol: "心", background: "#486a55", accent: "#a7e0bc" },
+    fortuneteller: { symbol: "卜", background: "#5a4c85", accent: "#d7c4ff" },
+    undertaker: { symbol: "葬", background: "#46505c", accent: "#c7d2df" },
+    monk: { symbol: "僧", background: "#5d6540", accent: "#dce6a0" },
+    ravenkeeper: { symbol: "鸦", background: "#2c3349", accent: "#aab8dc" },
+    virgin: { symbol: "圣", background: "#7a5570", accent: "#ffd0ea" },
+    slayer: { symbol: "猎", background: "#60433f", accent: "#ffb2a8" },
+    soldier: { symbol: "兵", background: "#3e5f54", accent: "#a7dbc8" },
+    mayor: { symbol: "长", background: "#61562f", accent: "#f0db82" },
+    butler: { symbol: "管", background: "#59486f", accent: "#d3baf0" },
+    drunk: { symbol: "醉", background: "#604d72", accent: "#e3c0ff" },
+    recluse: { symbol: "隐", background: "#4c5264", accent: "#c6ccdf" },
+    saint: { symbol: "徒", background: "#69506b", accent: "#edc8f2" },
+    poisoner: { symbol: "毒", background: "#753852", accent: "#ffa7c4" },
+    spy: { symbol: "谍", background: "#54304f", accent: "#f0a0dc" },
+    scarletwoman: { symbol: "红", background: "#7a2f3d", accent: "#ff9cab" },
+    baron: { symbol: "爵", background: "#694331", accent: "#e7b187" },
+    imp: { symbol: "魔", background: "#7c2f25", accent: "#ff9c88" }
+  };
+
   function role(id, name, team, ability, copies, firstNight, otherNight, extra) {
-    return { id, name, team, ability, copies, firstNight, otherNight, ...(extra || {}) };
+    const details = extra || {};
+    return {
+      id,
+      name,
+      team,
+      ability,
+      copies,
+      firstNight,
+      otherNight,
+      ...details,
+      avatar: normalizeRoleAvatar(id, name, team, details.avatar)
+    };
+  }
+
+  function normalizeRoleAvatar(id, name, team, avatar) {
+    const teamColors = TEAM_AVATAR_COLORS[team] || TEAM_AVATAR_COLORS.townsfolk;
+    const preset = ROLE_AVATARS[id] || {};
+    const source = { ...preset, ...(avatar || {}) };
+    return {
+      symbol: String(source.symbol || Array.from(String(name || "?"))[0] || "?").slice(0, 2),
+      background: source.background || teamColors.background,
+      accent: source.accent || teamColors.accent
+    };
   }
 
   const DEFAULT_SCRIPTS = [

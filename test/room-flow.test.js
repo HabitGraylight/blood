@@ -1,6 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createRoomStore } = require("../src/server/room-store.js");
+const { DEFAULT_SCRIPTS } = require("../src/shared/game-data.js");
+
+test("default script roles all have editable avatar data", () => {
+  const roles = DEFAULT_SCRIPTS[0].roles;
+  assert.equal(roles.every((item) => item.avatar?.symbol && item.avatar?.background && item.avatar?.accent), true);
+  assert.equal(new Set(roles.map((item) => item.avatar.symbol)).size, roles.length);
+});
 
 test("multiple players can join, host can deal, player views stay private", async () => {
   const store = createRoomStore();

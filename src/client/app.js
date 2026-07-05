@@ -1,6 +1,15 @@
 const { TEAM_LABELS, ALIGNMENT_LABELS, DEFAULT_SETUP, role: makeRole } = window.BLOOD_DATA;
 
 const CLIENT_KEY = "blood-room-client-v2";
+const TEAM_AVATAR_FALLBACKS = {
+  townsfolk: { background: "#2f5f73", accent: "#8ed0e0" },
+  outsider: { background: "#5f4b7a", accent: "#d7b8ff" },
+  minion: { background: "#6f354f", accent: "#f0a0bd" },
+  demon: { background: "#743126", accent: "#ffb09b" },
+  traveler: { background: "#5f5832", accent: "#ecd77a" },
+  fabled: { background: "#345f4a", accent: "#99dfba" },
+  unknown: { background: "#2a2f3a", accent: "#8a93a3" }
+};
 
 const app = {
   roomId: "",
@@ -560,7 +569,10 @@ function renderSetup() {
       row.className = "bag-row";
       row.innerHTML = `
         <span class="bag-count">${selectedCount}</span>
-        <div><strong>${escapeHtml(item.name)}</strong><br><small>${escapeHtml(item.ability)}</small></div>
+        <div class="role-bag-identity">
+          ${roleAvatarHtml(item, "small")}
+          <div><strong>${escapeHtml(item.name)}</strong><br><small>${escapeHtml(item.ability)}</small></div>
+        </div>
         <div class="mini-buttons">
           <button type="button" data-bag-minus="${item.id}">-</button>
           <button type="button" data-bag-plus="${item.id}">+</button>
@@ -608,14 +620,18 @@ function renderBoard() {
     const shownRole = roleById(player.shownRoleId || player.roleId);
     const isSelf = player.id === me().playerId;
     let roleText = "角色隐藏";
+    let visibleRole = null;
     if (isStoryteller() && !app.publicView) {
       roleText = actualRole
         ? `${actualRole.name}${shownRole && shownRole.id !== actualRole.id ? ` / 显示 ${shownRole.name}` : ""}`
         : "未发牌";
+      visibleRole = actualRole;
     } else if (isSelf && shownRole) {
       roleText = `你的角色：${shownRole.name}`;
+      visibleRole = shownRole;
     } else if (isStoryteller() && app.publicView) {
       roleText = shownRole?.name || "未发牌";
+      visibleRole = shownRole;
     }
     const stateText = isSelf && player.alignment ? `${ALIGNMENT_LABELS[player.alignment]} - ` : "";
     token.innerHTML = `
@@ -623,7 +639,10 @@ function renderBoard() {
         <div class="player-name">${escapeHtml(player.name)}</div>
         <span class="seat-number">${index + 1}</span>
       </div>
-      <div class="role-line">${escapeHtml(roleText)}</div>
+      <div class="player-role-strip">
+        ${roleAvatarHtml(visibleRole, visibleRole ? "token" : "token hidden-role")}
+        <div class="role-line">${escapeHtml(roleText)}</div>
+      </div>
       <div class="state-line">${stateText}${player.alive ? "存活" : "死亡"}${player.ai ? " · AI" : ""}</div>
       <div class="badge-row">${badgesForPlayer(player).map((badge) => `<span class="badge ${badge.color || ""}">${escapeHtml(badge.text)}</span>`).join("")}</div>
     `;
@@ -724,7 +743,7 @@ function renderNightOrder() {
     const node = document.createElement("div");
     node.className = `night-item ${inPlay.has(roleId) ? "active" : ""}`;
     node.innerHTML = `
-      <strong>${escapeHtml(item.name)} ${actors.length ? `- ${actors.map(escapeHtml).join(", ")}` : ""}</strong>
+      <strong class="night-role-heading">${roleAvatarHtml(item, "small")}<span>${escapeHtml(item.name)} ${actors.length ? `- ${actors.map(escapeHtml).join(", ")}` : ""}</span></strong>
       <span class="ability">${escapeHtml(item.ability)}</span>
     `;
     els.nightOrderList.append(node);
@@ -743,9 +762,14 @@ function renderSelfCard() {
   els.selfRoleState.textContent = isStoryteller() ? "真人说书人" : isOwner() ? "房主玩家" : "玩家";
   els.selfCard.className = "selected-card";
   els.selfCard.innerHTML = `
-    <strong>${escapeHtml(player.name)}</strong>
+    <div class="role-card-heading">
+      ${roleAvatarHtml(shownRole, shownRole ? "large" : "large hidden-role")}
+      <div>
+        <strong>${escapeHtml(player.name)}</strong>
+        <span>${escapeHtml(shownRole?.name || "待发牌")}</span>
+      </div>
+    </div>
     <span>阵营：${escapeHtml(ALIGNMENT_LABELS[player.alignment] || "待发牌")}</span>
-    <span>角色：${escapeHtml(shownRole?.name || "待发牌")}</span>
     <span>${escapeHtml(shownRole?.ability || "等待说书人发牌。")}</span>
     <div class="badge-row">
       <span class="badge ${player.alive ? "green" : "red"}">${player.alive ? "存活" : "死亡"}</span>
@@ -770,20 +794,31 @@ function renderSelectedPlayer() {
   els.selectedSeat.textContent = `座位 ${index + 1}`;
   els.selectedPlayerCard.className = "selected-card";
   if (!isStoryteller()) {
+    const playerVisibleRole = player.id === me().playerId ? shownRole : null;
     els.selectedPlayerCard.innerHTML = `
-      <strong>${escapeHtml(player.name)}</strong>
+      <div class="role-card-heading">
+        ${roleAvatarHtml(playerVisibleRole, playerVisibleRole ? "large" : "large hidden-role")}
+        <div>
+          <strong>${escapeHtml(player.name)}</strong>
+          <span>${player.id === me().playerId ? escapeHtml(shownRole?.name || "待发牌") : "角色隐藏"}</span>
+        </div>
+      </div>
       <span>${player.alive ? "存活" : "死亡"}</span>
       ${player.ai ? `<span>AI：${escapeHtml(player.aiProfile?.persona || "未设置性格")}</span>` : ""}
-      <span>${player.id === me().playerId ? `你的角色：${escapeHtml(shownRole?.name || "待发牌")}` : "角色隐藏"}</span>
     `;
     return;
   }
   els.selectedPlayerCard.innerHTML = `
-    <strong>${escapeHtml(player.name)}</strong>
+    <div class="role-card-heading">
+      ${roleAvatarHtml(actualRole, actualRole ? "large" : "large hidden-role")}
+      <div>
+        <strong>${escapeHtml(player.name)}</strong>
+        <span>${escapeHtml(actualRole?.name || "未发牌")}</span>
+      </div>
+    </div>
     <span>${ALIGNMENT_LABELS[player.alignment]} - ${player.alive ? "存活" : "死亡"}</span>
     ${player.ai ? `<span>AI：${escapeHtml(player.aiProfile?.persona || "未设置性格")}</span>` : ""}
-    <span>真实角色：${escapeHtml(actualRole?.name || "未发牌")}</span>
-    <span>玩家看到：${escapeHtml(shownRole?.name || "未发牌")}</span>
+    <span>玩家看到：${roleAvatarHtml(shownRole, shownRole ? "inline" : "inline hidden-role")} ${escapeHtml(shownRole?.name || "未发牌")}</span>
     <div class="badge-row">${(player.reminders || []).map((item) => `<span class="badge green">${escapeHtml(item)}</span>`).join("")}</div>
   `;
   els.roleAssignSelect.value = player.roleId || "";
@@ -979,10 +1014,22 @@ function renderRoleEditor() {
     node.querySelector('[data-field="ability"]').value = item.ability || "";
     node.querySelector('[data-field="firstNight"]').checked = Boolean(item.firstNight);
     node.querySelector('[data-field="otherNight"]').checked = Boolean(item.otherNight);
+    const avatar = roleAvatarData(item);
+    node.querySelector('[data-avatar-field="symbol"]').value = avatar.symbol;
+    node.querySelector('[data-avatar-field="background"]').value = avatar.background;
+    node.querySelector('[data-avatar-field="accent"]').value = avatar.accent;
+    syncRoleEditorAvatarPreview(node, item);
     node.querySelectorAll("[data-field]").forEach((field) => {
       field.addEventListener("input", () => {
         const key = field.dataset.field;
         item[key] = field.type === "checkbox" ? field.checked : field.type === "number" ? Number(field.value) : field.value;
+        syncRoleEditorAvatarPreview(node, item);
+      });
+    });
+    node.querySelectorAll("[data-avatar-field]").forEach((field) => {
+      field.addEventListener("input", () => {
+        item.avatar = { ...roleAvatarData(item), [field.dataset.avatarField]: field.value };
+        syncRoleEditorAvatarPreview(node, item);
       });
     });
     node.querySelector('[data-action="delete"]').addEventListener("click", () => {
@@ -1014,8 +1061,17 @@ function duplicateDraftScript() {
 
 function addRoleToDraft() {
   if (!app.draftScript) return;
-  app.draftScript.roles.push(makeRole(`custom_${Date.now()}`, "新角色", "townsfolk", "填写能力摘要。", 1, false, false));
+  app.draftScript.roles.push(
+    makeRole(`custom_${Date.now()}`, "新角色", "townsfolk", "填写能力摘要。", 1, false, false, {
+      avatar: { symbol: "新", background: "#355070", accent: "#f2cc8f" }
+    })
+  );
   renderRoleEditor();
+}
+
+function syncRoleEditorAvatarPreview(node, item) {
+  const preview = node.querySelector("[data-avatar-preview]");
+  if (preview) preview.innerHTML = roleAvatarHtml(item, "large");
 }
 
 async function importScript(event) {
@@ -1179,6 +1235,39 @@ function displayRecipient(value) {
   if (value?.startsWith("player:")) return nameOf(value.slice(7));
   if (value?.startsWith("room:")) return game().rooms.find((room) => room.id === value.slice(5))?.name || "私聊房";
   return value || "";
+}
+
+function roleAvatarHtml(item, extraClass = "") {
+  const avatar = roleAvatarData(item);
+  const teamClass = safeClassToken(item?.team || "unknown");
+  const label = item?.name ? `${item.name}头像` : "隐藏角色头像";
+  const classes = ["role-avatar", teamClass, extraClass].filter(Boolean).join(" ");
+  return `<span class="${classes}" style="--avatar-bg:${avatar.background};--avatar-accent:${avatar.accent}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"><span>${escapeHtml(avatar.symbol)}</span></span>`;
+}
+
+function roleAvatarData(item) {
+  const team = item?.team || "unknown";
+  const fallback = TEAM_AVATAR_FALLBACKS[team] || TEAM_AVATAR_FALLBACKS.unknown;
+  const avatar = item?.avatar || {};
+  return {
+    symbol: safeAvatarSymbol(avatar.symbol || item?.name || "?"),
+    background: safeCssColor(avatar.background, fallback.background),
+    accent: safeCssColor(avatar.accent, fallback.accent)
+  };
+}
+
+function safeAvatarSymbol(value) {
+  const chars = Array.from(String(value || "?").trim());
+  return chars.slice(0, 2).join("") || "?";
+}
+
+function safeCssColor(value, fallback) {
+  const text = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback;
+}
+
+function safeClassToken(value) {
+  return String(value || "unknown").replace(/[^a-z0-9_-]/gi, "") || "unknown";
 }
 
 function getRoomFromUrl() {

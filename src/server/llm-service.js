@@ -38,7 +38,21 @@ function createLlmService(options = {}) {
         })
       }
     ];
-    return completeWithProvider({ fetchImpl, provider, providerId, model, messages, temperature: 0.7 });
+    const result = await completeWithProvider({
+      fetchImpl,
+      provider,
+      providerId,
+      model,
+      messages,
+      temperature: 0.7,
+      allowPromptExport: context.requester.isStoryteller,
+      promptUnavailableMessage: "LLM provider 未完整配置。LLM 说书人模式下不会向玩家房主导出包含隐藏魔典的 prompt。"
+    });
+    if (result.ok && !context.requester.isStoryteller) {
+      const text = redactStorytellerOutputForPlayer(result.text || "", context);
+      return { ...result, text, redacted: text !== result.text };
+    }
+    return result;
   }
 
   async function completeAiPlayer(store, roomId, clientId, token, payload) {
@@ -71,9 +85,28 @@ function createLlmService(options = {}) {
   return { complete };
 }
 
-async function completeWithProvider({ fetchImpl, provider, providerId, model, messages, temperature }) {
+async function completeWithProvider({
+  fetchImpl,
+  provider,
+  providerId,
+  model,
+  messages,
+  temperature,
+  allowPromptExport = true,
+  promptUnavailableMessage = "Provider 未完整配置。"
+}) {
   const apiKey = provider.apiKey || (provider.apiKeyEnv ? process.env[provider.apiKeyEnv] : "");
   if (!provider.endpoint || !model || (provider.apiKeyEnv && !apiKey)) {
+    if (!allowPromptExport) {
+      return {
+        ok: false,
+        promptOnly: true,
+        providerId,
+        model,
+        prompt: promptUnavailableMessage,
+        messages: []
+      };
+    }
     return {
       ok: false,
       promptOnly: true,
@@ -110,6 +143,34 @@ async function completeWithProvider({ fetchImpl, provider, providerId, model, me
     model,
     text: data.choices?.[0]?.message?.content || ""
   };
+}
+
+function redactStorytellerOutputForPlayer(text, context) {
+  const ownPlayer = context.game.players.find((player) => player.clientId === context.requester.clientId);
+  const script =
+    context.game.scripts.find((item) => item.id === context.game.activeScriptId) || context.game.scripts[0] || { roles: [] };
+  const roleNamesById = new Map(script.roles.map((role) => [role.id, role.name]).filter((entry) => entry[0] && entry[1]));
+  const allowedRoleIds = new Set([ownPlayer?.shownRoleId || ""].filter(Boolean));
+  const forbiddenRoleNames = new Set();
+
+  for (const player of context.game.players) {
+    const roleIds = [player.roleId, player.shownRoleId].filter(Boolean);
+    for (const roleId of roleIds) {
+      if (player.id === ownPlayer?.id && allowedRoleIds.has(roleId)) continue;
+      const roleName = roleNamesById.get(roleId);
+      if (roleName) forbiddenRoleNames.add(roleName);
+    }
+  }
+
+  let redacted = text;
+  for (const roleName of [...forbiddenRoleNames].sort((a, b) => b.length - a.length)) {
+    redacted = redacted.replace(new RegExp(escapeRegExp(roleName), "g"), "某隐藏角色");
+  }
+  return redacted;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function loadConfig(configPath, localConfigPath) {

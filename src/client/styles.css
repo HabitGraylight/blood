@@ -506,6 +506,101 @@ h2 {
   font-size: 12px;
 }
 
+.role-avatar {
+  --avatar-bg: #2a2f3a;
+  --avatar-accent: #8a93a3;
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border: 1px solid color-mix(in srgb, var(--avatar-accent) 72%, white 6%);
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 32% 25%, rgba(255, 255, 255, 0.32), transparent 0 22%, transparent 24%),
+    radial-gradient(circle at center, color-mix(in srgb, var(--avatar-bg) 78%, white 8%), var(--avatar-bg));
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, 0.06),
+    0 4px 12px rgba(0, 0, 0, 0.22);
+  color: #fff8ec;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.role-avatar::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border: 1px solid color-mix(in srgb, var(--avatar-accent) 64%, transparent);
+  border-radius: 50%;
+}
+
+.role-avatar > span {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.52);
+}
+
+.role-avatar.small {
+  width: 34px;
+  height: 34px;
+  font-size: 15px;
+}
+
+.role-avatar.token {
+  width: 38px;
+  height: 38px;
+  font-size: 16px;
+}
+
+.role-avatar.large {
+  width: 64px;
+  height: 64px;
+  font-size: 26px;
+}
+
+.role-avatar.inline {
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  vertical-align: -6px;
+  font-size: 11px;
+}
+
+.role-avatar.hidden-role {
+  --avatar-bg: #262b35;
+  --avatar-accent: #737d8e;
+  color: #b8c0cf;
+}
+
+.player-role-strip,
+.role-bag-identity,
+.night-role-heading,
+.role-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.player-role-strip {
+  align-items: flex-start;
+}
+
+.role-bag-identity > div,
+.role-card-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.role-card-heading span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .player-name {
   min-width: 0;
   font-weight: 700;
@@ -638,6 +733,10 @@ h2 {
 .night-item {
   display: grid;
   gap: 5px;
+}
+
+.night-role-heading {
+  align-items: center;
 }
 
 .night-item.active {
@@ -801,6 +900,17 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 150px;
   gap: 10px;
+}
+
+.avatar-editor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .inline-check {
