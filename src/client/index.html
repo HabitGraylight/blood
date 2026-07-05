@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>血染钟楼多人房间原型</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" role="img">
+              <circle cx="32" cy="32" r="28"></circle>
+              <path d="M32 13v20l13 8"></path>
+              <path d="M18 54h28"></path>
+              <path d="M24 18h16"></path>
+            </svg>
+          </div>
+          <div>
+            <h1>多人房间原型</h1>
+            <p>玩家进房、私聊、房主说书人、LLM 可接入、板子可 DIY</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="exportStateBtn" type="button">导出存档</button>
+          <label class="file-button">
+            导入存档
+            <input id="importStateInput" type="file" accept="application/json" />
+          </label>
+          <button id="resetAppBtn" class="danger" type="button">重置</button>
+        </div>
+      </header>
+
+      <section class="room-panel panel">
+        <div class="room-status">
+          <div>
+            <span class="eyebrow">Room</span>
+            <h2 id="currentRoomInfo">未进入房间</h2>
+          </div>
+          <div id="connectionState" class="connection-state">离线</div>
+        </div>
+        <div class="room-actions">
+          <label>
+            昵称
+            <input id="displayNameInput" maxlength="28" placeholder="你的名字" />
+          </label>
+          <label>
+            新房间名
+            <input id="roomNameInput" maxlength="36" placeholder="周日晚钟楼" />
+          </label>
+          <button id="createGameRoomBtn" type="button">创建房间</button>
+          <label>
+            房间码
+            <input id="joinRoomCodeInput" maxlength="8" placeholder="ABC123" />
+          </label>
+          <button id="joinGameRoomBtn" type="button">加入房间</button>
+          <button id="leaveRoomBtn" class="ghost" type="button">离开</button>
+        </div>
+        <div class="share-row">
+          <input id="roomShareLink" readonly placeholder="进入房间后这里会出现邀请链接" />
+          <button id="copyRoomLinkBtn" type="button">复制邀请链接</button>
+        </div>
+      </section>
+
+      <section id="hostGuidePanel" class="host-guide panel">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Game Flow</span>
+            <h2 id="hostGuideTitle">先创建或加入房间</h2>
+          </div>
+          <span id="hostGuideMeta">等待中</span>
+        </div>
+        <div id="hostNextHint" class="next-hint">创建房间后，房主会在这里看到清晰的开局步骤。</div>
+        <div class="guide-steps">
+          <article class="guide-step" id="guideStepInvite">
+            <strong>1. 邀请玩家</strong>
+            <span>分享房间链接；如果只是测试，可以先补空座位。</span>
+            <div class="button-row">
+              <button id="guideCopyLinkBtn" type="button">复制链接</button>
+              <button id="fillFiveSeatsBtn" type="button">补到 5 人测试</button>
+              <button id="guideAddAiBtn" type="button">加 AI 玩家</button>
+            </div>
+          </article>
+          <article class="guide-step" id="guideStepDeal">
+            <strong>2. 准备发牌</strong>
+            <span>人数达到 5-15 后，按当前板子自动抽角色并随机发牌。</span>
+            <div class="button-row">
+              <button id="guideAutoBagBtn" type="button">自动抽角色</button>
+              <button id="guideDealRolesBtn" type="button">随机发牌</button>
+            </div>
+          </article>
+          <article class="guide-step" id="guideStepStart">
+            <strong>3. 开始游戏</strong>
+            <span>发牌后进入首夜；普通玩家只会看到自己的身份。</span>
+            <button id="guideStartNightBtn" type="button">开始首夜</button>
+          </article>
+        </div>
+      </section>
+
+      <main class="layout">
+        <aside class="panel setup-panel">
+          <section class="section">
+            <div class="section-heading">
+              <h2>开局</h2>
+              <span id="saveStatus">未保存</span>
+            </div>
+            <label for="scriptSelect">板子</label>
+            <select id="scriptSelect"></select>
+            <div class="segmented" role="group" aria-label="说书人模式">
+              <button id="humanModeBtn" class="active" type="button">真人说书人</button>
+              <button id="llmModeBtn" type="button">LLM 说书人</button>
+            </div>
+            <div id="llmConfig" class="llm-config hidden">
+              <label for="llmEndpoint">Provider ID（来自 config/llm.config.json）</label>
+              <input id="llmEndpoint" placeholder="deepseek" />
+              <label for="llmModel">模型覆盖</label>
+              <input id="llmModel" placeholder="留空则使用 provider.defaultModel" />
+              <label for="llmKey">API Key</label>
+              <input id="llmKey" disabled placeholder="从服务端配置或环境变量读取" />
+              <button id="copyLlmPromptBtn" type="button">复制当前 LLM 上下文</button>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <h2>玩家</h2>
+              <span id="playerCountBadge">0 人</span>
+            </div>
+            <textarea id="playerNames" rows="6" spellcheck="false" placeholder="每行一个玩家名&#10;阿青&#10;小北&#10;陈墨"></textarea>
+            <div class="button-row">
+              <button id="seatPlayersBtn" type="button">生成座位</button>
+              <button id="addPlayerBtn" type="button">加一位</button>
+            </div>
+            <div class="ai-player-box">
+              <label>
+                AI 玩家名
+                <input id="aiPlayerNameInput" maxlength="28" placeholder="AI 阿钟" />
+              </label>
+              <label>
+                AI 性格/策略
+                <textarea id="aiPlayerPersonaInput" rows="3" placeholder="谨慎发言，优先保护自己的身份，不直接暴露隐藏信息。"></textarea>
+              </label>
+              <label>
+                AI Provider ID
+                <input id="aiPlayerProviderInput" maxlength="80" placeholder="留空走角色/默认配置" />
+              </label>
+              <button id="addAiPlayerBtn" type="button">加入 AI 玩家</button>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <h2>发牌袋</h2>
+              <span id="setupCounts">等待玩家</span>
+            </div>
+            <div id="roleBagSummary" class="role-bag-summary"></div>
+            <div class="button-row">
+              <button id="autoBagBtn" type="button">按人数自动抽角色</button>
+              <button id="dealRolesBtn" type="button">随机发牌</button>
+            </div>
+            <button id="clearRolesBtn" class="ghost" type="button">清空玩家角色</button>
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <h2>板子编辑</h2>
+              <span>JSON 驱动</span>
+            </div>
+            <div class="button-row">
+              <button id="openScriptEditorBtn" type="button">编辑角色</button>
+              <button id="exportScriptBtn" type="button">导出板子</button>
+            </div>
+            <label class="file-button wide">
+              导入板子
+              <input id="importScriptInput" type="file" accept="application/json" />
+            </label>
+          </section>
+        </aside>
+
+        <section class="board-area">
+          <div class="phase-strip panel">
+            <div>
+              <span class="eyebrow">当前阶段</span>
+              <h2 id="phaseTitle">准备中</h2>
+            </div>
+            <div class="phase-actions">
+              <button id="startFirstNightBtn" type="button">开始首夜</button>
+              <button id="advancePhaseBtn" type="button">推进阶段</button>
+              <button id="publicViewBtn" type="button">公开视角</button>
+            </div>
+          </div>
+
+          <div class="town-panel panel">
+            <div class="town-header">
+              <div>
+                <span class="eyebrow">Town Square</span>
+                <h2>城镇广场</h2>
+              </div>
+              <div id="winCondition" class="win-condition">等待发牌</div>
+            </div>
+            <div id="townCircle" class="town-circle" aria-live="polite"></div>
+          </div>
+
+          <div class="lower-grid">
+            <section class="panel nominations">
+              <div class="section-heading">
+                <h2>提名与投票</h2>
+                <span id="voteThreshold">门槛 -</span>
+              </div>
+              <div class="form-grid">
+                <label>
+                  提名者
+                  <select id="nominatorSelect"></select>
+                </label>
+                <label>
+                  被提名者
+                  <select id="nomineeSelect"></select>
+                </label>
+              </div>
+              <div id="voteList" class="vote-list"></div>
+              <div class="button-row">
+                <button id="recordVoteBtn" type="button">记录投票</button>
+                <button id="executeLeaderBtn" type="button">处决当前最高票</button>
+              </div>
+              <div id="nominationLog" class="compact-log"></div>
+            </section>
+
+            <section class="panel night-order">
+              <div class="section-heading">
+                <h2>夜晚顺序</h2>
+                <span id="nightKind">首夜</span>
+              </div>
+              <div id="nightOrderList" class="night-order-list"></div>
+              <div class="button-row">
+                <button id="llmNightBtn" type="button">让 LLM 给夜晚提示</button>
+                <button id="markNightDoneBtn" type="button">本夜结束</button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="panel control-panel">
+          <section class="section self-view">
+            <div class="section-heading">
+              <h2>我的身份</h2>
+              <span id="selfRoleState">未入房</span>
+            </div>
+            <div id="selfCard" class="selected-card empty">创建或加入房间后显示。</div>
+          </section>
+
+          <section class="section selected-player">
+            <div class="section-heading">
+              <h2>玩家控制</h2>
+              <span id="selectedSeat">未选择</span>
+            </div>
+            <div id="selectedPlayerCard" class="selected-card empty">点击城镇广场中的玩家。</div>
+            <div id="playerControls" class="player-controls hidden">
+              <label>
+                真实角色
+                <select id="roleAssignSelect"></select>
+              </label>
+              <label>
+                玩家看到的角色
+                <select id="shownRoleSelect"></select>
+              </label>
+              <div class="toggle-grid">
+                <button id="toggleAliveBtn" type="button">生死</button>
+                <button id="togglePoisonBtn" type="button">中毒</button>
+                <button id="toggleDrunkBtn" type="button">醉酒</button>
+                <button id="toggleVoteTokenBtn" type="button">死票</button>
+              </div>
+              <div class="form-grid">
+                <label>
+                  阵营
+                  <select id="alignmentSelect">
+                    <option value="good">善良</option>
+                    <option value="evil">邪恶</option>
+                  </select>
+                </label>
+                <label>
+                  标记
+                  <input id="reminderInput" placeholder="如：红鲱鱼、安全、已用能力" />
+                </label>
+              </div>
+              <div class="button-row">
+                <button id="applyPlayerBtn" type="button">保存玩家</button>
+                <button id="addReminderBtn" type="button">加标记</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <h2>说书人日志</h2>
+              <button id="clearLogBtn" class="ghost small" type="button">清空</button>
+            </div>
+            <div id="storyLog" class="story-log"></div>
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <h2>LLM 操作</h2>
+              <span id="llmState">未启用</span>
+            </div>
+            <textarea id="llmInstruction" rows="4" placeholder="例如：根据当前局势，给真人说书人三条夜晚处理建议。"></textarea>
+            <div id="llmOutput" class="llm-output">LLM 输出会显示在这里。未配置 provider 时会复制提示词。</div>
+            <div class="button-row">
+              <button id="askLlmBtn" type="button">请求建议</button>
+              <button id="summarizeChatBtn" type="button">总结私聊</button>
+              <button id="askSelectedAiBtn" type="button">让选中 AI 发言</button>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <section class="chat-panel panel">
+        <div class="chat-header">
+          <div>
+            <span class="eyebrow">社交层</span>
+            <h2>公开发言与私聊房间</h2>
+          </div>
+          <div class="chat-tabs">
+            <button class="active" data-chat-tab="public" type="button">公开</button>
+            <button data-chat-tab="private" type="button">私聊</button>
+            <button data-chat-tab="whisper" type="button">说书人私信</button>
+          </div>
+        </div>
+        <div class="chat-body">
+          <div id="chatMessages" class="chat-messages"></div>
+          <div class="chat-composer">
+            <div class="form-grid">
+              <label>
+                发言者
+                <select id="chatFromSelect"></select>
+              </label>
+              <label>
+                收件人
+                <select id="chatToSelect"></select>
+              </label>
+            </div>
+            <textarea id="chatText" rows="3" placeholder="记录公开发言、私聊内容或说书人给玩家的私密信息。"></textarea>
+            <div class="button-row">
+              <button id="sendChatBtn" type="button">发送记录</button>
+              <button id="createPrivateRoomBtn" type="button">用已选玩家开私聊房</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="scriptEditor" class="script-dialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow">Script Lab</span>
+            <h2>板子与角色编辑</h2>
+          </div>
+          <button value="close" class="ghost" type="submit">关闭</button>
+        </div>
+      </form>
+      <div class="script-editor-layout">
+        <div>
+          <label for="scriptNameInput">板子名</label>
+          <input id="scriptNameInput" />
+          <label for="scriptNoteInput">备注</label>
+          <textarea id="scriptNoteInput" rows="4"></textarea>
+          <div class="button-row">
+            <button id="saveScriptMetaBtn" type="button">保存板子信息</button>
+            <button id="duplicateScriptBtn" type="button">复制成新板子</button>
+          </div>
+          <div class="editor-help">
+            <strong>DIY 约定</strong>
+            <p>角色 ID 保持英文小写或拼音，夜晚顺序填写这些 ID。副本数大于 1 时，发牌袋会出现多个同角色令牌。</p>
+          </div>
+        </div>
+        <div>
+          <div class="section-heading">
+            <h2>角色池</h2>
+            <button id="addRoleBtn" type="button">新增角色</button>
+          </div>
+          <div id="roleEditorList" class="role-editor-list"></div>
+        </div>
+      </div>
+    </dialog>
+
+    <template id="roleEditorTemplate">
+      <article class="role-editor-card">
+        <div class="role-editor-head">
+          <input data-field="name" placeholder="角色名" />
+          <select data-field="team">
+            <option value="townsfolk">镇民</option>
+            <option value="outsider">外来者</option>
+            <option value="minion">爪牙</option>
+            <option value="demon">恶魔</option>
+            <option value="traveler">旅行者</option>
+            <option value="fabled">传奇</option>
+          </select>
+        </div>
+        <div class="form-grid">
+          <label>
+            ID
+            <input data-field="id" />
+          </label>
+          <label>
+            副本数
+            <input data-field="copies" type="number" min="0" max="9" />
+          </label>
+        </div>
+        <label>
+          能力摘要
+          <textarea data-field="ability" rows="3"></textarea>
+        </label>
+        <div class="role-editor-actions">
+          <label class="inline-check">
+            <input data-field="firstNight" type="checkbox" />
+            首夜行动
+          </label>
+          <label class="inline-check">
+            <input data-field="otherNight" type="checkbox" />
+            其他夜行动
+          </label>
+          <button data-action="delete" class="danger" type="button">删除</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/shared/game-data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

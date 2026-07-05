@@ -1,0 +1,25 @@
+{
+  "providers": {
+    "deepseek": {
+      "type": "openai-compatible",
+      "endpoint": "https://api.deepseek.com/chat/completions",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "defaultModel": "deepseek-chat",
+      "headers": {}
+    }
+  },
+  "defaults": {
+    "storytellerProvider": "deepseek",
+    "aiPlayerProvider": "deepseek"
+  },
+  "storyteller": {
+    "providerId": "deepseek",
+    "model": "deepseek-chat"
+  },
+  "roleProviders": {
+    "imp": "deepseek",
+    "poisoner": "deepseek",
+    "fortuneteller": "deepseek"
+  },
+  "aiPlayerOverrides": {}
+}

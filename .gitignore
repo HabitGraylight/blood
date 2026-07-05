@@ -1,0 +1,12 @@
+node_modules/
+coverage/
+dist/
+
+.env
+.env.*
+!.env.example
+
+config/llm.local.json
+
+*.log
+.DS_Store

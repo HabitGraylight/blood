@@ -1,0 +1,18 @@
+{
+  "name": "blood-room-game",
+  "version": "0.1.0",
+  "description": "多人房间制社交推理游戏原型",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HabitGraylight/blood.git"
+  },
+  "scripts": {
+    "start": "node src/server/server.js",
+    "test": "node --test",
+    "check": "node --check src/server/server.js && node --check src/server/room-store.js && node --check src/server/llm-service.js && node --check src/client/app.js && node --check src/shared/game-data.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

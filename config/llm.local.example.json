@@ -1,0 +1,7 @@
+{
+  "providers": {
+    "deepseek": {
+      "apiKey": "sk-your-deepseek-api-key"
+    }
+  }
+}

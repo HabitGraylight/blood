@@ -1,0 +1,118 @@
+# 血染钟楼多人房间项目
+
+这是一个多人房间制的网页游戏原型。第一目标不是做说书人看板，而是让多人进入同一个房间：真人说书人模式下房主担任说书人；LLM 说书人模式下房主只是玩家兼房间管理员，普通玩家只看到自己该看到的信息。
+
+当前默认 LLM provider 是 DeepSeek，配置文件不会要求把真实 API Key 提交到仓库。
+
+## 目录结构
+
+```text
+config/         LLM provider 配置和本地配置样例
+prompts/        说书人、AI 玩家、角色独立 prompt
+src/
+  client/        浏览器 UI
+  server/        HTTP API、SSE、房间引擎
+  shared/        前后端共享的板子/角色数据
+test/            多玩家房间逻辑测试
+```
+
+根目录只保留项目入口和说明文件。
+
+## 启动
+
+```bash
+npm start
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8000/
+```
+
+## LLM 配置
+
+默认 provider 是 `deepseek`：
+
+```json
+{
+  "endpoint": "https://api.deepseek.com/chat/completions",
+  "apiKeyEnv": "DEEPSEEK_API_KEY",
+  "defaultModel": "deepseek-chat"
+}
+```
+
+推荐二选一配置密钥：
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+或复制本地覆盖文件：
+
+```bash
+cp config/llm.local.example.json config/llm.local.json
+```
+
+然后在 `config/llm.local.json` 填真实 key。这个文件已加入 `.gitignore`，不会被提交。服务启动时会先读取 `config/llm.config.json`，再合并本地覆盖文件。
+
+Prompt 独立放在 `prompts/`：
+
+- `prompts/storyteller/system.md`：LLM 说书人系统提示。
+- `prompts/storyteller/advice.md`：说书人建议请求模板。
+- `prompts/ai-player/system.md`：AI 玩家通用系统提示。
+- `prompts/ai-player/public-chat.md`：AI 玩家公开发言模板。
+- `prompts/roles/{roleId}.md`：角色专属提示；没有专属文件时走 `prompts/roles/default.md`。
+
+每个角色可以在 `config/llm.config.json` 的 `roleProviders` 指向不同 provider。每个 AI 玩家也可以在前端填独立 `providerId`；即使复用同一个 provider，每次请求也只发送该 AI 当前可见上下文，不共享其他 AI 的对话上下文。
+
+## 当前游戏流程
+
+1. 房主输入昵称和房间名，创建房间。
+2. 顶部“房主准备流程”会提示下一步：复制邀请链接，或补到 5 人测试。
+3. 玩家用邀请链接或房间码加入。
+4. 人数不够时，房主可以加入 AI 玩家；AI 玩家会计入人数、发牌、投票候选和聊天。
+5. 人数够后，房主点“自动抽角色”和“随机发牌”。
+6. 真人说书人模式下，房主可以看到魔典；LLM 说书人模式下，房主只能看到自己的身份。
+7. 房主开始首夜，之后用夜晚顺序、聊天、提名投票继续主持。
+
+## AI 玩家
+
+- 房主可以添加 AI 玩家，并设置名字和性格/策略。
+- AI 玩家是正式玩家，会占座、参与发牌、出现在提名和投票列表里。
+- 房主选中 AI 玩家后，可用“让选中 AI 发言”生成公开发言。
+- AI 发言复用 OpenAI 兼容 LLM 接口；默认 DeepSeek，前端只可选择 `providerId` 和模型覆盖。未配置密钥时会复制提示词，方便手动粘贴到模型。
+- 普通玩家不能冒充 AI 玩家发言。
+
+## 测试
+
+```bash
+npm run check
+npm test
+node test/room-flow.test.js
+node test/llm-service.test.js
+```
+
+测试覆盖：
+
+- 多个玩家同时加入同一个房间。
+- 普通玩家不能执行房主设置操作。
+- 房主自动抽角色、随机发牌、开始首夜。
+- 普通玩家只能看到自己的身份，看不到其他人的隐藏阵营/角色。
+- LLM 说书人模式下，房主是玩家视角，不能查看或手动修改魔典。
+- AI 玩家加入、发牌、房主驱动 AI 发言，以及普通玩家不能冒充 AI。
+- 私聊房消息只对成员可见；真人说书人可以审计私聊。
+- SSE 订阅者能收到加入和阶段推进更新。
+
+## 当前限制
+
+- 房间状态仍然是内存存储，服务重启会清空。
+- 没有账号系统，房主身份依赖浏览器本地保存的 token。
+- 角色能力仍由房主裁定，暂未做自动裁判。
+- 私聊目前是文本记录，不是语音/视频。
+
+下一步建议优先做持久化、玩家换座/认领空座、角色能力钩子和更清晰的夜晚行动向导。
+
+## 开源协议
+
+MIT License。详见 `LICENSE`。
