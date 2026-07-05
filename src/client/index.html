@@ -24,6 +24,7 @@
           </div>
         </div>
         <div class="top-actions">
+          <span id="accountStatus" class="account-status">未登录</span>
           <button id="exportStateBtn" type="button">导出存档</button>
           <label class="file-button">
             导入存档
@@ -32,6 +33,42 @@
           <button id="resetAppBtn" class="danger" type="button">重置</button>
         </div>
       </header>
+
+      <nav class="view-nav" aria-label="页面导航">
+        <button class="active" data-view-target="lobby" type="button">进入</button>
+        <button data-view-target="setup" type="button">准备</button>
+        <button data-view-target="game" type="button">游戏</button>
+        <button data-view-target="chat" type="button">社交</button>
+      </nav>
+
+      <section class="account-panel panel">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Account</span>
+            <h2>账号</h2>
+          </div>
+          <button id="logoutBtn" class="ghost small" type="button">退出登录</button>
+        </div>
+        <div class="auth-grid">
+          <label>
+            用户名
+            <input id="usernameInput" autocomplete="username" maxlength="24" placeholder="例如 habit_gray" />
+          </label>
+          <label>
+            密码
+            <input id="passwordInput" autocomplete="current-password" type="password" maxlength="128" placeholder="至少 8 位" />
+          </label>
+          <label>
+            显示名
+            <input id="displayNameInput" maxlength="28" placeholder="游戏内昵称" />
+          </label>
+          <div class="auth-actions">
+            <button id="loginBtn" type="button">登录</button>
+            <button id="registerBtn" type="button">注册</button>
+          </div>
+        </div>
+        <div id="authMessage" class="form-message">部署后用户数据保存在服务器本地 data/，不会进入代码仓库。</div>
+      </section>
 
       <section class="room-panel panel">
         <div class="room-status">
@@ -42,10 +79,6 @@
           <div id="connectionState" class="connection-state">离线</div>
         </div>
         <div class="room-actions">
-          <label>
-            昵称
-            <input id="displayNameInput" maxlength="28" placeholder="你的名字" />
-          </label>
           <label>
             新房间名
             <input id="roomNameInput" maxlength="36" placeholder="周日晚钟楼" />
@@ -115,6 +148,12 @@
             <div id="llmConfig" class="llm-config hidden">
               <label for="llmEndpoint">Provider ID（来自 config/llm.config.json）</label>
               <input id="llmEndpoint" placeholder="deepseek" />
+              <label for="llmPresetSelect">AI 智慧程度</label>
+              <select id="llmPresetSelect">
+                <option value="flash">速度 · DeepSeek V4 Flash</option>
+                <option value="pro">标准 · DeepSeek V4 Pro</option>
+                <option value="pro-reasoning">推理 · DeepSeek V4 Pro</option>
+              </select>
               <label for="llmModel">模型覆盖</label>
               <input id="llmModel" placeholder="留空则使用 provider.defaultModel" />
               <label for="llmKey">API Key</label>
@@ -145,6 +184,14 @@
               <label>
                 AI Provider ID
                 <input id="aiPlayerProviderInput" maxlength="80" placeholder="留空走角色/默认配置" />
+              </label>
+              <label>
+                AI 智慧程度
+                <select id="aiPlayerWisdomSelect">
+                  <option value="flash">速度 · Flash</option>
+                  <option value="pro">标准 · Pro</option>
+                  <option value="pro-reasoning">推理 · Pro</option>
+                </select>
               </label>
               <button id="addAiPlayerBtn" type="button">加入 AI 玩家</button>
             </div>

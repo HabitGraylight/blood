@@ -1,6 +1,7 @@
 const { TEAM_LABELS, ALIGNMENT_LABELS, DEFAULT_SETUP, role: makeRole } = window.BLOOD_DATA;
 
 const CLIENT_KEY = "blood-room-client-v2";
+const USER_KEY = "blood-room-user-v1";
 const TEAM_AVATAR_FALLBACKS = {
   townsfolk: { background: "#2f5f73", accent: "#8ed0e0" },
   outsider: { background: "#5f4b7a", accent: "#d7b8ff" },
@@ -15,10 +16,12 @@ const app = {
   roomId: "",
   clientId: "",
   token: "",
+  user: null,
   state: null,
   source: null,
   selectedPlayerId: "",
   activeChatTab: "public",
+  activeView: "lobby",
   publicView: false,
   draftScript: null
 };
@@ -28,8 +31,10 @@ const els = {};
 document.addEventListener("DOMContentLoaded", () => {
   bindElements();
   bindEvents();
+  restoreUser();
   restoreClient();
   renderAll();
+  verifyUser();
   autoJoinFromUrl();
 });
 
@@ -37,7 +42,14 @@ function bindElements() {
   [
     "currentRoomInfo",
     "connectionState",
+    "accountStatus",
+    "usernameInput",
     "displayNameInput",
+    "passwordInput",
+    "loginBtn",
+    "registerBtn",
+    "logoutBtn",
+    "authMessage",
     "roomNameInput",
     "createGameRoomBtn",
     "joinRoomCodeInput",
@@ -63,6 +75,7 @@ function bindElements() {
     "llmModeBtn",
     "llmConfig",
     "llmEndpoint",
+    "llmPresetSelect",
     "llmModel",
     "copyLlmPromptBtn",
     "playerNames",
@@ -71,6 +84,7 @@ function bindElements() {
     "aiPlayerNameInput",
     "aiPlayerPersonaInput",
     "aiPlayerProviderInput",
+    "aiPlayerWisdomSelect",
     "addAiPlayerBtn",
     "playerCountBadge",
     "setupCounts",
@@ -143,6 +157,12 @@ function bindElements() {
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-view-target]").forEach((btn) => {
+    btn.addEventListener("click", () => setView(btn.dataset.viewTarget));
+  });
+  els.loginBtn.addEventListener("click", loginUser);
+  els.registerBtn.addEventListener("click", registerUser);
+  els.logoutBtn.addEventListener("click", logoutUser);
   els.createGameRoomBtn.addEventListener("click", createGameRoom);
   els.joinGameRoomBtn.addEventListener("click", joinGameRoom);
   els.leaveRoomBtn.addEventListener("click", leaveRoom);
@@ -158,6 +178,7 @@ function bindEvents() {
   els.humanModeBtn.addEventListener("click", () => hostAction("setMode", { mode: "human" }));
   els.llmModeBtn.addEventListener("click", () => hostAction("setMode", { mode: "llm" }));
   els.llmEndpoint.addEventListener("change", syncLlmConfig);
+  els.llmPresetSelect.addEventListener("change", syncLlmConfig);
   els.llmModel.addEventListener("change", syncLlmConfig);
   els.copyLlmPromptBtn.addEventListener("click", () => copyText(buildLlmPrompt("完整局势上下文")));
 
@@ -225,9 +246,9 @@ function bindEvents() {
 }
 
 async function createGameRoom() {
-  const name = els.displayNameInput.value.trim() || "房主";
+  if (!requireUser()) return;
   const roomName = els.roomNameInput.value.trim() || "钟楼房间";
-  const result = await postJson("/api/rooms", { name, roomName });
+  const result = await postJson("/api/rooms", { roomName, auth: authPayload() });
   enterRoom(result);
 }
 
@@ -237,8 +258,8 @@ async function joinGameRoom() {
     showConnection("请输入房间码", false);
     return;
   }
-  const name = els.displayNameInput.value.trim() || "玩家";
-  const result = await postJson(`/api/rooms/${roomId}/join`, { name });
+  if (!requireUser()) return;
+  const result = await postJson(`/api/rooms/${roomId}/join`, { auth: authPayload() });
   enterRoom(result);
 }
 
@@ -249,6 +270,7 @@ function enterRoom(result) {
   app.state = result.state;
   saveClient();
   connectEvents();
+  setView("setup");
   renderAll();
 }
 
@@ -282,6 +304,97 @@ function saveClient() {
     CLIENT_KEY,
     JSON.stringify({ roomId: app.roomId, clientId: app.clientId, token: app.token })
   );
+}
+
+async function registerUser() {
+  try {
+    const result = await postJson("/api/auth/register", {
+      username: els.usernameInput.value.trim(),
+      password: els.passwordInput.value,
+      displayName: els.displayNameInput.value.trim()
+    });
+    setUserSession(result);
+    showAuthMessage("注册成功，已登录。");
+  } catch (error) {
+    showAuthMessage(error.message);
+  }
+}
+
+async function loginUser() {
+  try {
+    const result = await postJson("/api/auth/login", {
+      username: els.usernameInput.value.trim(),
+      password: els.passwordInput.value
+    });
+    setUserSession(result);
+    showAuthMessage("登录成功。");
+  } catch (error) {
+    showAuthMessage(error.message);
+  }
+}
+
+async function logoutUser() {
+  if (app.user) {
+    await postJson("/api/auth/logout", {
+      userId: app.user.id,
+      sessionToken: app.user.sessionToken
+    }).catch(() => {});
+  }
+  app.user = null;
+  localStorage.removeItem(USER_KEY);
+  leaveRoom();
+  showAuthMessage("已退出登录。");
+}
+
+async function verifyUser() {
+  if (!app.user?.id || !app.user?.sessionToken) return;
+  try {
+    const result = await getJson(
+      `/api/auth/me?userId=${encodeURIComponent(app.user.id)}&sessionToken=${encodeURIComponent(app.user.sessionToken)}`
+    );
+    app.user = { ...result.user, sessionToken: app.user.sessionToken };
+    saveUser();
+    renderAll();
+  } catch {
+    app.user = null;
+    localStorage.removeItem(USER_KEY);
+    renderAll();
+  }
+}
+
+function setUserSession(result) {
+  app.user = { ...result.user, sessionToken: result.sessionToken };
+  els.passwordInput.value = "";
+  saveUser();
+  renderAll();
+}
+
+function restoreUser() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(USER_KEY) || "{}");
+    if (saved.id && saved.sessionToken) app.user = saved;
+  } catch {
+    localStorage.removeItem(USER_KEY);
+  }
+}
+
+function saveUser() {
+  localStorage.setItem(USER_KEY, JSON.stringify(app.user));
+}
+
+function authPayload() {
+  return { userId: app.user?.id || "", sessionToken: app.user?.sessionToken || "" };
+}
+
+function requireUser() {
+  if (app.user) return true;
+  showAuthMessage("请先登录或注册账号。");
+  setView("lobby");
+  return false;
+}
+
+function showAuthMessage(text) {
+  els.authMessage.textContent = text;
 }
 
 function autoJoinFromUrl() {
@@ -318,6 +431,7 @@ async function hostAction(type, payload = {}) {
     return;
   }
   await roomAction(type, payload);
+  if (type === "startFirstNight" || type === "advancePhase") setView("game");
 }
 
 async function roomAction(type, payload = {}) {
@@ -331,6 +445,8 @@ async function roomAction(type, payload = {}) {
 }
 
 function renderAll() {
+  renderView();
+  renderAccount();
   renderRoom();
   renderHostGuide();
   renderPermissions();
@@ -347,6 +463,32 @@ function renderAll() {
   renderSelectedPlayer();
   renderLog();
   renderChat();
+}
+
+function setView(view) {
+  app.activeView = ["lobby", "setup", "game", "chat"].includes(view) ? view : "lobby";
+  renderView();
+}
+
+function renderView() {
+  document.querySelector(".app-shell").dataset.view = app.activeView;
+  document.querySelectorAll("[data-view-target]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.viewTarget === app.activeView);
+  });
+}
+
+function renderAccount() {
+  if (app.user) {
+    els.accountStatus.textContent = `${app.user.displayName} · ${app.user.username}`;
+    els.usernameInput.value = app.user.username;
+    if (document.activeElement !== els.displayNameInput) els.displayNameInput.value = app.user.displayName;
+    els.logoutBtn.disabled = false;
+  } else {
+    els.accountStatus.textContent = "未登录";
+    els.logoutBtn.disabled = true;
+  }
+  els.createGameRoomBtn.disabled = !app.user;
+  els.joinGameRoomBtn.disabled = !app.user;
 }
 
 function renderRoom() {
@@ -381,6 +523,7 @@ function renderPermissions() {
     "humanModeBtn",
     "llmModeBtn",
     "llmEndpoint",
+    "llmPresetSelect",
     "llmModel",
     "copyLlmPromptBtn",
     "playerNames",
@@ -388,6 +531,8 @@ function renderPermissions() {
     "addPlayerBtn",
     "aiPlayerNameInput",
     "aiPlayerPersonaInput",
+    "aiPlayerProviderInput",
+    "aiPlayerWisdomSelect",
     "addAiPlayerBtn",
     "autoBagBtn",
     "dealRolesBtn",
@@ -534,6 +679,7 @@ function renderMode() {
   els.llmModeBtn.classList.toggle("active", isLlm);
   els.llmConfig.classList.toggle("hidden", !isLlm || !isOwner());
   if (document.activeElement !== els.llmEndpoint) els.llmEndpoint.value = game().llm?.providerId || "";
+  if (document.activeElement !== els.llmPresetSelect) els.llmPresetSelect.value = game().llm?.presetId || "pro-reasoning";
   if (document.activeElement !== els.llmModel) els.llmModel.value = game().llm?.model || "";
   els.llmState.textContent = isLlm ? "已启用" : "真人模式";
 }
@@ -864,14 +1010,19 @@ function renderChat() {
 
 function syncLlmConfig() {
   if (!isOwner()) return;
-  hostAction("setLlm", { providerId: els.llmEndpoint.value.trim(), model: els.llmModel.value.trim() });
+  hostAction("setLlm", {
+    providerId: els.llmEndpoint.value.trim(),
+    presetId: els.llmPresetSelect.value,
+    model: els.llmModel.value.trim()
+  });
 }
 
 function addAiPlayer(useDefault) {
   const name = useDefault ? "" : els.aiPlayerNameInput.value.trim();
   const persona = useDefault ? "" : els.aiPlayerPersonaInput.value.trim();
   const providerId = useDefault ? "" : els.aiPlayerProviderInput.value.trim();
-  hostAction("addAiPlayer", { name, persona, providerId, model: els.llmModel.value.trim() });
+  const presetId = useDefault ? "flash" : els.aiPlayerWisdomSelect.value;
+  hostAction("addAiPlayer", { name, persona, providerId, presetId, model: els.llmModel.value.trim() });
   if (!useDefault) {
     els.aiPlayerNameInput.value = "";
     els.aiPlayerPersonaInput.value = "";
@@ -932,6 +1083,7 @@ async function askLlm(instruction) {
       kind: "storyteller-advice",
       instruction,
       providerId: els.llmEndpoint.value.trim(),
+      presetId: els.llmPresetSelect.value,
       model: els.llmModel.value.trim()
     });
     if (result.promptOnly) {
@@ -957,6 +1109,7 @@ async function askSelectedAiPlayer() {
       playerId: player.id,
       instruction: els.llmInstruction.value.trim() || "请根据当前公开局势发言。",
       providerId: els.llmEndpoint.value.trim(),
+      presetId: els.llmPresetSelect.value,
       model: els.llmModel.value.trim()
     });
     if (result.promptOnly) {
@@ -1284,6 +1437,13 @@ async function postJson(url, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+async function getJson(url) {
+  const response = await fetch(url);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
   return data;

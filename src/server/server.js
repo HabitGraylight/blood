@@ -4,6 +4,7 @@ const path = require("path");
 const { URL } = require("url");
 const { createRoomStore } = require("./room-store.js");
 const { createLlmService } = require("./llm-service.js");
+const { createUserStore } = require("./user-store.js");
 
 const DEFAULT_PORT = Number(process.env.PORT || 8000);
 const CLIENT_ROOT = path.resolve(__dirname, "../client");
@@ -23,11 +24,12 @@ const MIME = {
 function createServer(options = {}) {
   const store = options.store || createRoomStore();
   const llmService = options.llmService || createLlmService(options.llm || {});
+  const userStore = options.userStore || createUserStore(options.users || {});
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
       if (url.pathname.startsWith("/api/")) {
-        await handleApi(store, llmService, req, res, url);
+        await handleApi(store, llmService, userStore, req, res, url);
         return;
       }
       serveStatic(url.pathname, res);
@@ -35,14 +37,20 @@ function createServer(options = {}) {
       sendJson(res, error.code || 500, { error: error.message });
     }
   });
-  return { server, store, llmService };
+  return { server, store, llmService, userStore };
 }
 
-async function handleApi(store, llmService, req, res, url) {
+async function handleApi(store, llmService, userStore, req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean);
+  if (parts[0] === "api" && parts[1] === "auth") {
+    await handleAuth(userStore, req, res, url, parts);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/rooms") {
     const body = await readJson(req);
-    sendJson(res, 200, store.createRoom(body.roomName, body.name));
+    const user = requireAccount(userStore, body.auth);
+    sendJson(res, 200, store.createRoom(body.roomName, user.displayName, user.id));
     return;
   }
 
@@ -51,7 +59,8 @@ async function handleApi(store, llmService, req, res, url) {
 
     if (req.method === "POST" && parts[3] === "join") {
       const body = await readJson(req);
-      sendJson(res, 200, store.joinRoom(roomId, body.name));
+      const user = requireAccount(userStore, body.auth);
+      sendJson(res, 200, store.joinRoom(roomId, user.displayName, user.id));
       return;
     }
 
@@ -82,6 +91,35 @@ async function handleApi(store, llmService, req, res, url) {
   }
 
   sendJson(res, 404, { error: "Not found" });
+}
+
+async function handleAuth(userStore, req, res, url, parts) {
+  if (req.method === "POST" && parts[2] === "register") {
+    sendJson(res, 200, userStore.register(await readJson(req)));
+    return;
+  }
+  if (req.method === "POST" && parts[2] === "login") {
+    sendJson(res, 200, userStore.login(await readJson(req)));
+    return;
+  }
+  if (req.method === "POST" && parts[2] === "logout") {
+    const body = await readJson(req);
+    sendJson(res, 200, userStore.logout(body.userId, body.sessionToken));
+    return;
+  }
+  if (req.method === "GET" && parts[2] === "me") {
+    const user = userStore.authenticate(url.searchParams.get("userId"), url.searchParams.get("sessionToken"));
+    if (!user) throw httpError(401, "未登录");
+    sendJson(res, 200, { user });
+    return;
+  }
+  sendJson(res, 404, { error: "Not found" });
+}
+
+function requireAccount(userStore, auth) {
+  const user = userStore.authenticate(auth?.userId, auth?.sessionToken);
+  if (!user) throw httpError(401, "请先登录账号");
+  return user;
 }
 
 function openEventStream(store, roomId, url, res) {
@@ -171,6 +209,12 @@ function sendJson(res, status, payload) {
     "Cache-Control": "no-store"
   });
   res.end(JSON.stringify(payload));
+}
+
+function httpError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
 
 if (require.main === module) {

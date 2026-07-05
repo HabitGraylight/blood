@@ -150,11 +150,99 @@ select:focus {
   margin-bottom: 18px;
 }
 
+.view-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(15, 17, 24, 0.72);
+}
+
+.view-nav button {
+  flex: 1;
+}
+
+.account-status {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(214, 170, 91, 0.28);
+  border-radius: 999px;
+  color: #f2d9a9;
+  background: rgba(214, 170, 91, 0.1);
+  font-size: 12px;
+}
+
+.account-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 18px;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.form-message {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .room-panel {
   display: grid;
   gap: 12px;
   padding: 14px;
   margin-bottom: 18px;
+}
+
+.app-shell[data-view="lobby"] .host-guide,
+.app-shell[data-view="lobby"] .layout,
+.app-shell[data-view="lobby"] .chat-panel {
+  display: none;
+}
+
+.app-shell[data-view="setup"] .account-panel,
+.app-shell[data-view="setup"] .room-panel,
+.app-shell[data-view="setup"] .board-area,
+.app-shell[data-view="setup"] .control-panel,
+.app-shell[data-view="setup"] .chat-panel {
+  display: none;
+}
+
+.app-shell[data-view="setup"] .layout {
+  grid-template-columns: minmax(0, 980px);
+  justify-content: center;
+}
+
+.app-shell[data-view="game"] .account-panel,
+.app-shell[data-view="game"] .room-panel,
+.app-shell[data-view="game"] .host-guide,
+.app-shell[data-view="game"] .setup-panel,
+.app-shell[data-view="game"] .chat-panel {
+  display: none;
+}
+
+.app-shell[data-view="game"] .layout {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+}
+
+.app-shell[data-view="chat"] .account-panel,
+.app-shell[data-view="chat"] .room-panel,
+.app-shell[data-view="chat"] .host-guide,
+.app-shell[data-view="chat"] .layout {
+  display: none;
 }
 
 .host-guide {
@@ -215,7 +303,7 @@ select:focus {
 
 .room-actions {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto minmax(120px, 0.6fr) auto auto;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(120px, 0.6fr) auto auto;
   gap: 10px;
   align-items: end;
 }
@@ -949,6 +1037,7 @@ h2 {
   .layout,
   .lower-grid,
   .chat-body,
+  .auth-grid,
   .room-actions,
   .guide-steps,
   .script-editor-layout {
@@ -964,6 +1053,12 @@ h2 {
 
   .topbar {
     align-items: stretch;
+  }
+
+  .view-nav,
+  .auth-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .setup-panel,

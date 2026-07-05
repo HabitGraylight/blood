@@ -2,12 +2,13 @@
 
 这是一个多人房间制的网页游戏原型。第一目标不是做说书人看板，而是让多人进入同一个房间：真人说书人模式下房主担任说书人；LLM 说书人模式下房主只是玩家兼房间管理员，普通玩家只看到自己该看到的信息。
 
-当前默认 LLM provider 是 DeepSeek，配置文件不会要求把真实 API Key 提交到仓库。
+当前默认 LLM provider 是 DeepSeek，配置文件不会要求把真实 API Key 提交到仓库。项目带本地账号系统，用户数据保存在 `data/`，该目录被 `.gitignore` 排除。
 
 ## 目录结构
 
 ```text
 config/         LLM provider 配置和本地配置样例
+data/           服务器本地用户数据，默认不进 git
 prompts/        说书人、AI 玩家、角色独立 prompt
 src/
   client/        浏览器 UI
@@ -38,7 +39,7 @@ http://127.0.0.1:8000/
 {
   "endpoint": "https://api.deepseek.com/chat/completions",
   "apiKeyEnv": "DEEPSEEK_API_KEY",
-  "defaultModel": "deepseek-chat"
+  "defaultModel": "deepseek-v4-flash"
 }
 ```
 
@@ -66,19 +67,38 @@ Prompt 独立放在 `prompts/`：
 
 每个角色可以在 `config/llm.config.json` 的 `roleProviders` 指向不同 provider。每个 AI 玩家也可以在前端填独立 `providerId`；即使复用同一个 provider，每次请求也只发送该 AI 当前可见上下文，不共享其他 AI 的对话上下文。
 
+前端“AI 智慧程度”对应 `config/llm.config.json` 的 `modelPresets`：
+
+- `flash`：`deepseek-v4-flash`，低推理成本，适合普通 AI 玩家发言。
+- `pro`：`deepseek-v4-pro`，标准质量，适合说书人建议。
+- `pro-reasoning`：`deepseek-v4-pro` + thinking enabled + high reasoning effort，适合复杂裁定。
+
+当前开发环境如果设置了 `HTTPS_PROXY`，Node 内置 `fetch` 可能不自动走代理。服务端会先尝试 `fetch`，失败后在 `transport: "auto"` 下使用 `curl` fallback，因此本地代理环境也能连 DeepSeek。
+
 LLM 说书人 prompt 内置了平衡裁定原则：当规则允许说书人处理概率事件、错误信息、重定向、替死、角色误判或死亡选择时，模型会先参考存活善恶人数、恶魔压力、投票门槛、死亡节奏和角色信息量，再给推荐裁定与备选裁定。确定性规则不会因为“平衡”被改写。
 
 LLM 说书人模式下，房主仍是玩家。服务端会对玩家房主可见的 LLM 回复做隐藏角色名脱敏；如果 provider 未完整配置，也不会导出包含隐藏魔典的完整 prompt。
 
+## 用户系统与持久化
+
+- 玩家需要注册/登录后才能创建或加入房间。
+- 账号数据默认保存在 `data/users.json`。
+- 密码使用 PBKDF2 + salt 存储，session token 只保存 hash。
+- `data/` 已加入 `.gitignore`。部署时更新代码、拉取新版本或推送 GitHub 都不会上传用户数据。
+- 如果要把用户数据放到项目外，可以设置环境变量：
+
+```bash
+BLOOD_DATA_DIR=/srv/blood-data npm start
+```
+
 ## 当前游戏流程
 
-1. 房主输入昵称和房间名，创建房间。
-2. 顶部“房主准备流程”会提示下一步：复制邀请链接，或补到 5 人测试。
-3. 玩家用邀请链接或房间码加入。
-4. 人数不够时，房主可以加入 AI 玩家；AI 玩家会计入人数、发牌、投票候选和聊天。
-5. 人数够后，房主点“自动抽角色”和“随机发牌”。
+1. 房主注册或登录账号后，输入房间名创建房间。
+2. 进入页负责登录、注册、创建房间、加入房间。
+3. 准备页负责邀请玩家、选择真人/LLM 说书人、选择 AI 智慧程度、补 AI 玩家、抽角色、发牌。
+4. 游戏页负责城镇广场、夜晚顺序、提名投票、身份卡和说书人操作。
+5. 社交页负责公开发言、私聊房和说书人私信。
 6. 真人说书人模式下，房主可以看到魔典；LLM 说书人模式下，房主只能看到自己的身份。
-7. 房主开始首夜，之后用夜晚顺序、聊天、提名投票继续主持。
 
 ## AI 玩家
 
@@ -106,6 +126,8 @@ node test/llm-service.test.js
 测试覆盖：
 
 - 多个玩家同时加入同一个房间。
+- HTTP API 需要登录账号才能创建或加入房间。
+- 用户账号能持久化到 `data/users.json`，且不会暴露密码明文或 session token 明文。
 - 普通玩家不能执行房主设置操作。
 - 房主自动抽角色、随机发牌、开始首夜。
 - 普通玩家只能看到自己的身份，看不到其他人的隐藏阵营/角色。

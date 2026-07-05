@@ -1,5 +1,7 @@
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { execFile } = require("child_process");
 
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
 const DEFAULT_CONFIG_PATH = path.join(PROJECT_ROOT, "config/llm.config.json");
@@ -25,9 +27,14 @@ function createLlmService(options = {}) {
   async function completeStoryteller(store, roomId, clientId, token, payload) {
     const config = loadConfig(configPath, localConfigPath);
     const context = store.getStorytellerLlmContext(roomId, clientId, token, payload.instruction || "");
-    const providerId = payload.providerId || context.game.llm?.providerId || config.storyteller?.providerId || config.defaults?.storytellerProvider || "default";
+    const selection = resolveModelSelection(config, {
+      providerId: payload.providerId || context.game.llm?.providerId || config.storyteller?.providerId || config.defaults?.storytellerProvider || "default",
+      presetId: payload.presetId || context.game.llm?.presetId || config.storyteller?.presetId || config.defaults?.storytellerPreset || "",
+      model: payload.model || context.game.llm?.model || config.storyteller?.model || ""
+    });
+    const providerId = selection.providerId;
     const provider = selectProvider(config, providerId);
-    const model = payload.model || context.game.llm?.model || config.storyteller?.model || provider.defaultModel || "";
+    const model = selection.model || provider.defaultModel || "";
     const messages = [
       { role: "system", content: loadPrompt(promptsRoot, "storyteller/system.md") },
       {
@@ -45,6 +52,7 @@ function createLlmService(options = {}) {
       model,
       messages,
       temperature: 0.7,
+      requestOptions: selection.requestOptions,
       allowPromptExport: context.requester.isStoryteller,
       promptUnavailableMessage: "LLM provider 未完整配置。LLM 说书人模式下不会向玩家房主导出包含隐藏魔典的 prompt。"
     });
@@ -59,14 +67,14 @@ function createLlmService(options = {}) {
     const config = loadConfig(configPath, localConfigPath);
     const context = store.getAiPlayerLlmContext(roomId, clientId, token, payload.playerId, payload.instruction || "");
     const roleProvider = config.roleProviders?.[context.aiPlayer.roleId];
-    const providerId =
-      payload.providerId ||
-      context.aiPlayer.providerId ||
-      roleProvider ||
-      config.defaults?.aiPlayerProvider ||
-      "default";
+    const selection = resolveModelSelection(config, {
+      providerId: payload.providerId || context.aiPlayer.providerId || roleProvider || config.defaults?.aiPlayerProvider || "default",
+      presetId: payload.presetId || context.aiPlayer.presetId || config.defaults?.aiPlayerPreset || "",
+      model: payload.model || context.aiPlayer.model || ""
+    });
+    const providerId = selection.providerId;
     const provider = selectProvider(config, providerId);
-    const model = payload.model || context.aiPlayer.model || provider.defaultModel || "";
+    const model = selection.model || provider.defaultModel || "";
     const rolePrompt = loadRolePrompt(promptsRoot, context.aiPlayer.roleId);
     const messages = [
       { role: "system", content: loadPrompt(promptsRoot, "ai-player/system.md") },
@@ -79,7 +87,15 @@ function createLlmService(options = {}) {
         })
       }
     ];
-    return completeWithProvider({ fetchImpl, provider, providerId, model, messages, temperature: 0.85 });
+    return completeWithProvider({
+      fetchImpl,
+      provider,
+      providerId,
+      model,
+      messages,
+      temperature: 0.85,
+      requestOptions: selection.requestOptions
+    });
   }
 
   return { complete };
@@ -92,6 +108,7 @@ async function completeWithProvider({
   model,
   messages,
   temperature,
+  requestOptions = {},
   allowPromptExport = true,
   promptUnavailableMessage = "Provider 未完整配置。"
 }) {
@@ -120,28 +137,105 @@ async function completeWithProvider({
     throw httpError(500, "当前 Node 运行时没有可用 fetch。");
   }
 
-  const response = await fetchImpl(provider.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      ...(provider.headers || {})
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature
-    })
-  });
-  if (!response.ok) {
-    throw httpError(502, `LLM provider ${providerId} 返回 HTTP ${response.status}`);
-  }
-  const data = await response.json();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    ...(provider.headers || {})
+  };
+  const requestBody = {
+    model,
+    messages,
+    temperature,
+    ...requestOptions
+  };
+  const data = await postProviderJson({ fetchImpl, provider, providerId, headers, requestBody });
   return {
     ok: true,
     providerId,
     model,
     text: data.choices?.[0]?.message?.content || ""
+  };
+}
+
+async function postProviderJson({ fetchImpl, provider, providerId, headers, requestBody }) {
+  if (fetchImpl) {
+    try {
+      const response = await fetchImpl(provider.endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody)
+      });
+      if (!response.ok) {
+        throw httpError(502, `LLM provider ${providerId} 返回 HTTP ${response.status}`);
+      }
+      return response.json();
+    } catch (error) {
+      if (provider.transport === "fetch") throw error;
+      if (!shouldTryCurlFallback(provider)) throw error;
+    }
+  }
+  return postJsonWithCurl(provider.endpoint, headers, requestBody, provider.timeoutMs || 45000);
+}
+
+function shouldTryCurlFallback(provider) {
+  if (provider.transport === "curl") return true;
+  if (provider.transport && provider.transport !== "auto") return false;
+  return Boolean(process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy);
+}
+
+async function postJsonWithCurl(endpoint, headers, requestBody, timeoutMs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "blood-llm-"));
+  const bodyPath = path.join(dir, "body.json");
+  const configPath = path.join(dir, "curl.conf");
+  fs.writeFileSync(bodyPath, JSON.stringify(requestBody), { mode: 0o600 });
+  fs.writeFileSync(configPath, buildCurlConfig(endpoint, headers, bodyPath), { mode: 0o600 });
+  try {
+    const { stdout } = await execFileAsync("curl", ["--config", configPath], { timeout: timeoutMs });
+    return JSON.parse(stdout);
+  } catch (error) {
+    const detail = String(error.stderr || error.message || "").slice(0, 240);
+    throw httpError(502, `LLM curl fallback 请求失败：${detail || "unknown error"}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function buildCurlConfig(endpoint, headers, bodyPath) {
+  const lines = [
+    "silent",
+    "show-error",
+    "fail-with-body",
+    "request = POST",
+    `url = ${JSON.stringify(endpoint)}`,
+    `data-binary = ${JSON.stringify(`@${bodyPath}`)}`
+  ];
+  for (const [key, value] of Object.entries(headers)) {
+    lines.push(`header = ${JSON.stringify(`${key}: ${value}`)}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function execFileAsync(file, args, options) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { maxBuffer: 2_000_000, ...options }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function resolveModelSelection(config, input) {
+  const preset = input.presetId ? config.modelPresets?.[input.presetId] : null;
+  return {
+    providerId: input.providerId || preset?.providerId || config.defaults?.storytellerProvider || "default",
+    presetId: input.presetId || "",
+    model: input.model || preset?.model || "",
+    requestOptions: preset?.requestOptions || {}
   };
 }
 

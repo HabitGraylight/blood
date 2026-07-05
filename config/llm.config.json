@@ -4,17 +4,53 @@
       "type": "openai-compatible",
       "endpoint": "https://api.deepseek.com/chat/completions",
       "apiKeyEnv": "DEEPSEEK_API_KEY",
-      "defaultModel": "deepseek-chat",
+      "defaultModel": "deepseek-v4-flash",
+      "transport": "auto",
       "headers": {}
+    }
+  },
+  "modelPresets": {
+    "flash": {
+      "label": "速度",
+      "providerId": "deepseek",
+      "model": "deepseek-v4-flash",
+      "requestOptions": {
+        "thinking": { "type": "disabled" },
+        "reasoning_effort": "low",
+        "max_tokens": 700
+      }
+    },
+    "pro": {
+      "label": "标准",
+      "providerId": "deepseek",
+      "model": "deepseek-v4-pro",
+      "requestOptions": {
+        "thinking": { "type": "disabled" },
+        "reasoning_effort": "medium",
+        "max_tokens": 1000
+      }
+    },
+    "pro-reasoning": {
+      "label": "推理",
+      "providerId": "deepseek",
+      "model": "deepseek-v4-pro",
+      "requestOptions": {
+        "thinking": { "type": "enabled" },
+        "reasoning_effort": "high",
+        "max_tokens": 1400
+      }
     }
   },
   "defaults": {
     "storytellerProvider": "deepseek",
-    "aiPlayerProvider": "deepseek"
+    "aiPlayerProvider": "deepseek",
+    "storytellerPreset": "pro-reasoning",
+    "aiPlayerPreset": "flash"
   },
   "storyteller": {
     "providerId": "deepseek",
-    "model": "deepseek-chat"
+    "presetId": "pro-reasoning",
+    "model": ""
   },
   "roleProviders": {
     "imp": "deepseek",

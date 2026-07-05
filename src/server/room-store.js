@@ -4,9 +4,9 @@ const { DEFAULT_SCRIPTS, DEFAULT_SETUP } = require("../shared/game-data.js");
 function createRoomStore() {
   const rooms = new Map();
 
-  function createRoom(roomName, hostName) {
+  function createRoom(roomName, hostName, userId = "") {
     const id = makeRoomId(rooms);
-    const host = makeClient(hostName || "说书人");
+    const host = makeClient(hostName || "说书人", userId);
     const room = {
       id,
       name: cleanText(roomName, 36) || "钟楼房间",
@@ -21,9 +21,12 @@ function createRoomStore() {
     return sessionPayload(room, host);
   }
 
-  function joinRoom(roomId, name) {
+  function joinRoom(roomId, name, userId = "") {
     const room = requireRoom(roomId);
-    const client = makeClient(name || "玩家");
+    const existing = userId ? [...room.clients.values()].find((item) => item.userId === userId) : null;
+    if (existing) return sessionPayload(room, existing);
+
+    const client = makeClient(name || "玩家", userId);
     room.clients.set(client.id, client);
     room.game.players.push(makePlayer(client.name, room.game.players.length + 1, client.id));
     log(room, "玩家", `${client.name} 加入了房间。`, "public");
@@ -55,6 +58,7 @@ function createRoomStore() {
       },
       requester: {
         clientId: client.id,
+        userId: client.userId || "",
         name: client.name,
         isOwner: true,
         isStoryteller: isStoryteller(room, client)
@@ -130,13 +134,14 @@ function buildAiPlayerContext(room, player, instruction) {
       name: room.name,
       playerCount: room.game.players.length
     },
-    aiPlayer: {
+      aiPlayer: {
       id: player.id,
       name: player.name,
       seat: player.seat,
       alive: player.alive,
       persona: player.aiProfile?.persona || "",
       providerId: player.aiProfile?.providerId || "",
+      presetId: player.aiProfile?.presetId || "",
       model: player.aiProfile?.model || "",
       roleId: player.shownRoleId || player.roleId || "",
       visibleRole: roleById(room, player.shownRoleId || player.roleId)?.name || "",
@@ -184,7 +189,7 @@ function createGame() {
     scripts: deepClone(DEFAULT_SCRIPTS),
     activeScriptId: DEFAULT_SCRIPTS[0].id,
     storytellerMode: "human",
-    llm: { providerId: "", model: "" },
+    llm: { providerId: "", presetId: "pro-reasoning", model: "" },
     players: [],
     selectedBag: [],
     phase: "setup",
@@ -295,6 +300,7 @@ function mutateRoom(room, client, type, payload) {
       break;
     case "setLlm":
       game.llm.providerId = cleanText(payload.providerId, 80);
+      game.llm.presetId = cleanText(payload.presetId, 80);
       game.llm.model = cleanText(payload.model, 100);
       log(room, "LLM", "已更新 LLM 接入配置。");
       break;
@@ -402,6 +408,7 @@ function addAiPlayer(room, payload) {
     aiProfile: {
       persona,
       providerId: cleanText(payload.providerId, 80) || "",
+      presetId: cleanText(payload.presetId, 80) || "",
       model: cleanText(payload.model, 100) || ""
     }
   });
@@ -680,6 +687,7 @@ function sanitizeRoom(room, client) {
     },
     me: {
       clientId: client.id,
+      userId: client.userId || "",
       isHost: owner,
       isOwner: owner,
       isStoryteller: storyteller,
@@ -690,7 +698,7 @@ function sanitizeRoom(room, client) {
       scripts: game.scripts,
       activeScriptId: game.activeScriptId,
       storytellerMode: game.storytellerMode,
-      llm: owner ? game.llm : { providerId: "", model: "" },
+      llm: owner ? game.llm : { providerId: "", presetId: "", model: "" },
       players: game.players.map((player) => sanitizePlayer(player, storyteller, ownPlayer?.id)),
       selectedBag: storyteller ? game.selectedBag : [],
       setup: {
@@ -766,10 +774,11 @@ function getSetupCounts(room) {
   return activeScript(room).setupTable?.[count] || DEFAULT_SETUP[count] || null;
 }
 
-function makeClient(name) {
+function makeClient(name, userId = "") {
   return {
     id: crypto.randomUUID(),
     token: crypto.randomBytes(20).toString("hex"),
+    userId,
     name: cleanText(name, 28) || "玩家",
     joinedAt: Date.now()
   };

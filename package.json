@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/server/server.js",
     "test": "node --test",
-    "check": "node --check src/server/server.js && node --check src/server/room-store.js && node --check src/server/llm-service.js && node --check src/client/app.js && node --check src/shared/game-data.js"
+    "check": "node --check src/server/server.js && node --check src/server/room-store.js && node --check src/server/llm-service.js && node --check src/server/user-store.js && node --check src/client/app.js && node --check src/shared/game-data.js"
   },
   "engines": {
     "node": ">=20"
