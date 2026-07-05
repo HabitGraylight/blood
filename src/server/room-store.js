@@ -196,9 +196,20 @@ function createGame() {
     day: 0,
     night: 0,
     nominations: [],
+    dayFlow: createEmptyDayFlow(),
     chats: [],
     rooms: [],
     log: []
+  };
+}
+
+function createEmptyDayFlow() {
+  return {
+    status: "idle",
+    speakerQueue: [],
+    speakerIndex: 0,
+    votes: [],
+    startedAt: 0
   };
 }
 
@@ -259,7 +270,7 @@ function describeBalancePressure(aliveCount, goodAliveCount, evilAliveCount, dem
 function mutateRoom(room, client, type, payload) {
   const owner = isOwner(room, client);
   const storyteller = isStoryteller(room, client);
-  const playerActions = new Set(["sendChat", "createPrivateRoom"]);
+  const playerActions = new Set(["sendChat", "createPrivateRoom", "advanceDaySpeaker", "castVote"]);
   const ownerActions = new Set([
     "setScript",
     "setMode",
@@ -273,7 +284,10 @@ function mutateRoom(room, client, type, payload) {
     "clearRoles",
     "startFirstNight",
     "advancePhase",
+    "startDayDiscussion",
     "autoResolveDay",
+    "castAiVotes",
+    "resolveDayVotes",
     "resolveNight",
     "recordVote",
     "executeLeader",
@@ -355,8 +369,23 @@ function mutateRoom(room, client, type, payload) {
     case "advancePhase":
       advancePhase(room);
       break;
+    case "startDayDiscussion":
+      startDayDiscussion(room);
+      break;
     case "autoResolveDay":
       autoResolveDay(room);
+      break;
+    case "advanceDaySpeaker":
+      advanceDaySpeaker(room, client);
+      break;
+    case "castVote":
+      castVote(room, client, payload);
+      break;
+    case "castAiVotes":
+      castAiVotes(room);
+      break;
+    case "resolveDayVotes":
+      resolveDayVotes(room);
       break;
     case "resolveNight":
       resolveNight(room);
@@ -502,6 +531,7 @@ function resetDailyFlags(room) {
     wasNominatedToday: false
   }));
   room.game.nominations = [];
+  room.game.dayFlow = createEmptyDayFlow();
 }
 
 function advancePhase(room) {
@@ -528,35 +558,218 @@ function advancePhase(room) {
 function autoResolveDay(room) {
   const game = room.game;
   if (game.phase !== "day") {
-    log(room, "AI 流程", "当前不是白天，不能自动提名投票。", "public");
+    log(room, "AI 流程", "当前不是白天，不能推进白天流程。", "public");
     return;
   }
   const alive = game.players.filter((player) => player.alive);
   if (alive.length < 3) {
-    log(room, "AI 流程", "存活人数过少，跳过自动提名。", "public");
+    log(room, "AI 流程", "存活人数过少，白天结束。", "public");
     advancePhase(room);
     return;
   }
 
-  const nominator = alive.find((player) => player.ai && !player.nominatedToday) || alive.find((player) => !player.nominatedToday);
-  const nominee = chooseNomineeFromPublicPressure(room, nominator);
-  if (!nominator || !nominee) {
-    log(room, "AI 流程", "没有可用提名对象，白天结束。", "public");
-    advancePhase(room);
+  const flow = ensureDayFlow(room);
+  if (flow.status === "idle" || flow.status === "complete") {
+    startDayDiscussion(room);
     return;
   }
-
-  const votes = alive
-    .filter((player) => player.ai || player.id === nominator.id)
-    .filter((player) => player.id !== nominee.id)
-    .map((player) => player.id);
-  recordVote(room, { nominatorId: nominator.id, nomineeId: nominee.id, votes });
-  executeLeader(room);
-  if (game.phase === "day") advancePhase(room);
+  if (flow.status === "speaking") {
+    const speaker = currentDaySpeaker(room);
+    if (!speaker) {
+      flow.status = "voting";
+      log(room, "白天流程", "公开发言结束，进入投票。", "public");
+      return;
+    }
+    if (!speaker.ai) {
+      log(room, "AI 流程", `轮到 ${speaker.name} 发言，等待真人玩家操作。`, "public");
+      return;
+    }
+    advanceDaySpeaker(room, { id: room.hostId });
+    return;
+  }
+  if (flow.status === "voting") {
+    castAiVotes(room);
+  }
 }
 
-function chooseNomineeFromPublicPressure(room, nominator) {
-  const alive = room.game.players.filter((player) => player.alive && player.id !== nominator?.id);
+function ensureDayFlow(room) {
+  if (!room.game.dayFlow) room.game.dayFlow = createEmptyDayFlow();
+  return room.game.dayFlow;
+}
+
+function startDayDiscussion(room) {
+  const game = room.game;
+  if (game.phase !== "day") {
+    log(room, "白天流程", "当前不是白天，不能开始公开发言。", "public");
+    return;
+  }
+  const alive = game.players.filter((player) => player.alive);
+  if (alive.length < 3) {
+    log(room, "白天流程", "存活人数过少，白天结束。", "public");
+    advancePhase(room);
+    return;
+  }
+  game.dayFlow = {
+    status: "speaking",
+    speakerQueue: alive.map((player) => player.id),
+    speakerIndex: 0,
+    votes: [],
+    startedAt: Date.now()
+  };
+  const firstSpeaker = currentDaySpeaker(room);
+  log(room, "白天流程", `公开讨论开始，当前发言：${firstSpeaker?.name || "未知玩家"}。`, "public");
+}
+
+function currentDaySpeaker(room) {
+  const flow = ensureDayFlow(room);
+  return room.game.players.find((player) => player.id === flow.speakerQueue[flow.speakerIndex]) || null;
+}
+
+function advanceDaySpeaker(room, client) {
+  const game = room.game;
+  const flow = ensureDayFlow(room);
+  if (game.phase !== "day" || flow.status !== "speaking") {
+    log(room, "白天流程", "当前没有正在进行的公开发言。", "public");
+    return;
+  }
+  const speaker = currentDaySpeaker(room);
+  const owner = client?.id === room.hostId;
+  if (!owner && speaker?.clientId !== client?.id) {
+    throw httpError(403, "只能结束自己的发言。");
+  }
+
+  flow.speakerIndex += 1;
+  const nextSpeaker = currentDaySpeaker(room);
+  if (!nextSpeaker) {
+    flow.status = "voting";
+    log(room, "白天流程", "公开发言结束，进入投票。", "public");
+    return;
+  }
+  log(room, "白天流程", `轮到 ${nextSpeaker.name} 发言。`, "public");
+}
+
+function castVote(room, client, payload) {
+  const game = room.game;
+  const flow = ensureDayFlow(room);
+  if (game.phase !== "day" || flow.status !== "voting") {
+    log(room, "投票", "当前还没有进入投票阶段。", "public");
+    return;
+  }
+
+  const storyteller = isStoryteller(room, client);
+  const ownPlayer = game.players.find((player) => player.clientId === client.id);
+  const voterId = storyteller && payload.voterId ? payload.voterId : ownPlayer?.id;
+  const targetId = cleanText(payload.targetId, 80);
+  const voter = game.players.find((player) => player.id === voterId);
+  const target = game.players.find((player) => player.id === targetId);
+  if (!voter || !target) return;
+  if (!target.alive) {
+    log(room, "投票", `${target.name} 已死亡，不能作为投票对象。`, "public");
+    return;
+  }
+  if (!voter.alive && !voter.ghostVote) {
+    log(room, "投票", `${voter.name} 已没有死票。`, "public");
+    return;
+  }
+
+  flow.votes = flow.votes.filter((vote) => vote.voterId !== voter.id);
+  flow.votes.push({ voterId: voter.id, targetId: target.id, at: Date.now(), ai: Boolean(voter.ai) });
+  log(room, "投票", `${voter.name} 投票给 ${target.name}。`, "public");
+}
+
+function castAiVotes(room) {
+  const game = room.game;
+  const flow = ensureDayFlow(room);
+  if (game.phase !== "day" || flow.status !== "voting") {
+    log(room, "AI 投票", "当前还没有进入投票阶段。", "public");
+    return;
+  }
+  const voted = new Set(flow.votes.map((vote) => vote.voterId));
+  const voters = game.players.filter((player) => player.ai && player.alive && !voted.has(player.id));
+  if (!voters.length) {
+    log(room, "AI 投票", "没有待投票的 AI 玩家。", "public");
+    return;
+  }
+  for (const voter of voters) {
+    const target = chooseVoteTargetFromPublicPressure(room, voter);
+    if (!target) continue;
+    flow.votes.push({ voterId: voter.id, targetId: target.id, at: Date.now(), ai: true });
+    log(room, "AI 投票", `${voter.name} 投票给 ${target.name}。`, "public");
+  }
+}
+
+function resolveDayVotes(room) {
+  const game = room.game;
+  const flow = ensureDayFlow(room);
+  if (game.phase !== "day" || flow.status !== "voting") {
+    log(room, "处决", "当前还没有进入投票结算。", "public");
+    return;
+  }
+
+  const countedVotes = eligibleDayVotes(room, flow.votes);
+  const aliveCount = game.players.filter((player) => player.alive).length;
+  const threshold = Math.ceil(aliveCount / 2);
+  const tally = tallyVotes(countedVotes);
+  const leader = tally[0];
+  flow.status = "complete";
+
+  for (const vote of countedVotes) {
+    const voter = game.players.find((player) => player.id === vote.voterId);
+    if (voter && !voter.alive) voter.ghostVote = false;
+  }
+
+  if (!leader) {
+    log(room, "处决", "无人投票，今天无人处决。", "public");
+    advancePhase(room);
+    return;
+  }
+  const tied = tally.filter((item) => item.count === leader.count);
+  const leaderName = nameOf(room, leader.targetId);
+  game.nominations.push({
+    id: crypto.randomUUID(),
+    nominatorId: "public-vote",
+    nomineeId: leader.targetId,
+    votes: leader.voterIds,
+    threshold,
+    at: Date.now(),
+    phaseLabel: phaseLabel(game)
+  });
+
+  if (leader.count < threshold) {
+    log(room, "处决", `${leaderName} 最高 ${leader.count} 票，未达到门槛 ${threshold}，无人处决。`, "public");
+    advancePhase(room);
+    return;
+  }
+  if (tied.length > 1) {
+    log(room, "处决", `最高票平票：${tied.map((item) => nameOf(room, item.targetId)).join("、")}，无人处决。`, "public");
+    advancePhase(room);
+    return;
+  }
+  killPlayer(room, leader.targetId, "处决");
+  advancePhase(room);
+}
+
+function eligibleDayVotes(room, votes) {
+  return (Array.isArray(votes) ? votes : []).filter((vote) => {
+    const voter = room.game.players.find((player) => player.id === vote.voterId);
+    const target = room.game.players.find((player) => player.id === vote.targetId);
+    return voter && target?.alive && (voter.alive || voter.ghostVote);
+  });
+}
+
+function tallyVotes(votes) {
+  const tally = new Map();
+  for (const vote of votes) {
+    if (!tally.has(vote.targetId)) tally.set(vote.targetId, { targetId: vote.targetId, count: 0, voterIds: [] });
+    const row = tally.get(vote.targetId);
+    row.count += 1;
+    row.voterIds.push(vote.voterId);
+  }
+  return [...tally.values()].sort((a, b) => b.count - a.count);
+}
+
+function chooseVoteTargetFromPublicPressure(room, voter) {
+  const alive = room.game.players.filter((player) => player.alive && player.id !== voter?.id);
   if (!alive.length) return null;
   const publicText = room.game.chats
     .filter((message) => message.kind === "public")
@@ -565,7 +778,7 @@ function chooseNomineeFromPublicPressure(room, nominator) {
     .join("\n");
   const scored = alive.map((player) => ({
     player,
-    score: countMentions(publicText, player.name) + (player.wasNominatedToday ? -100 : 0)
+    score: countMentions(publicText, player.name)
   }));
   scored.sort((a, b) => b.score - a.score || a.player.seat - b.player.seat);
   return scored[0].player;
@@ -853,6 +1066,7 @@ function sanitizeRoom(room, client) {
       day: game.day,
       night: game.night,
       nominations: game.nominations,
+      dayFlow: game.dayFlow || createEmptyDayFlow(),
       chats: game.chats.filter((message) => canSeeChat(room, client, message)),
       rooms: game.rooms.filter((privateRoom) => storyteller || privateRoom.members.includes(ownPlayer?.id)),
       log: game.log.filter((entry) => storyteller || entry.scope === "public")

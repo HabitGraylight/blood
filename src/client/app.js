@@ -107,6 +107,21 @@ function bindElements() {
     "publicViewBtn",
     "townCircle",
     "winCondition",
+    "dayFlowStatus",
+    "publicChatPreview",
+    "playerSpeechText",
+    "startDiscussionBtn",
+    "continueAiStepBtn",
+    "sendSpeechBtn",
+    "skipSpeechBtn",
+    "voteThreshold",
+    "hostVoteTools",
+    "playerVoteTools",
+    "playerVoteTargetSelect",
+    "castPlayerVoteBtn",
+    "castAiVotesBtn",
+    "resolveDayVotesBtn",
+    "voteTally",
     "nominatorSelect",
     "nomineeSelect",
     "voteList",
@@ -210,6 +225,23 @@ function bindEvents() {
   els.resolveNightBtn.addEventListener("click", resolveNight);
   els.runAiDaySideBtn.addEventListener("click", runAiDayRound);
   els.resolveNightSideBtn.addEventListener("click", resolveNight);
+  els.startDiscussionBtn.addEventListener("click", async () => {
+    await roomAction("startDayDiscussion");
+    await refreshState();
+  });
+  els.continueAiStepBtn.addEventListener("click", runAiDayRound);
+  els.sendSpeechBtn.addEventListener("click", sendPlayerSpeech);
+  els.skipSpeechBtn.addEventListener("click", advanceMySpeech);
+  els.castPlayerVoteBtn.addEventListener("click", castPlayerVote);
+  els.castAiVotesBtn.addEventListener("click", async () => {
+    await roomAction("castAiVotes");
+    await refreshState();
+  });
+  els.resolveDayVotesBtn.addEventListener("click", async () => {
+    await roomAction("resolveDayVotes");
+    await refreshState();
+    setView("game");
+  });
   els.markNightDoneBtn.addEventListener("click", () => {
     if (isStoryteller()) hostAction("advancePhase");
     else resolveNight();
@@ -452,12 +484,21 @@ async function hostAction(type, payload = {}) {
 
 async function roomAction(type, payload = {}) {
   if (!hasRoom()) return;
-  await postJson(`/api/rooms/${app.roomId}/actions`, {
+  return postJson(`/api/rooms/${app.roomId}/actions`, {
     clientId: app.clientId,
     token: app.token,
     type,
     payload
   });
+}
+
+async function refreshState() {
+  if (!hasRoom()) return;
+  const result = await getJson(
+    `/api/rooms/${app.roomId}?clientId=${encodeURIComponent(app.clientId)}&token=${encodeURIComponent(app.token)}`
+  );
+  app.state = result.state;
+  renderAll();
 }
 
 function renderAll() {
@@ -472,6 +513,7 @@ function renderAll() {
   renderSetup();
   renderBoard();
   renderPhase();
+  renderPublicDiscussion();
   renderSelectors();
   renderNominations();
   renderNightOrder();
@@ -563,6 +605,10 @@ function renderPermissions() {
     "advancePhaseBtn",
     "runAiDayBtn",
     "resolveNightBtn",
+    "startDiscussionBtn",
+    "continueAiStepBtn",
+    "castAiVotesBtn",
+    "resolveDayVotesBtn",
     "runAiDaySideBtn",
     "resolveNightSideBtn",
     "recordVoteBtn",
@@ -835,6 +881,80 @@ function renderPhase() {
   els.publicViewBtn.textContent = app.publicView ? "公开视角已开" : "公开视角";
 }
 
+function renderPublicDiscussion() {
+  const flow = dayFlow();
+  const speaker = currentDaySpeaker();
+  if (game().phase !== "day") {
+    els.dayFlowStatus.textContent = game().phase === "setup" ? "等待开局" : "夜晚中";
+  } else if (flow.status === "speaking") {
+    els.dayFlowStatus.textContent = `当前发言：${speaker?.name || "未知玩家"}`;
+  } else if (flow.status === "voting") {
+    els.dayFlowStatus.textContent = "投票中";
+  } else if (flow.status === "complete") {
+    els.dayFlowStatus.textContent = "白天已结算";
+  } else {
+    els.dayFlowStatus.textContent = "等待公开发言";
+  }
+
+  const publicMessages = game()
+    .chats.filter((message) => message.kind === "public")
+    .slice(-8);
+  els.publicChatPreview.innerHTML =
+    publicMessages
+      .map(
+        (message) => `
+          <article class="public-chat-line ${message.from === me().playerId ? "mine" : ""}">
+            <strong>${escapeHtml(displayActor(message.from))}</strong>
+            <p>${escapeHtml(message.text)}</p>
+          </article>
+        `
+      )
+      .join("") || `<div class="public-chat-line empty">公开频道暂无发言。</div>`;
+  renderDayFlowControls();
+}
+
+function renderDayFlowControls() {
+  const connected = hasRoom() && app.state;
+  const flow = dayFlow();
+  const speaker = currentDaySpeaker();
+  const player = myPlayer();
+  const phaseIsDay = game().phase === "day";
+  const myTurn = phaseIsDay && flow.status === "speaking" && speaker?.id === me().playerId;
+  const canVote = phaseIsDay && flow.status === "voting" && player && (player.alive || player.ghostVote);
+  const ownerCanContinue =
+    connected &&
+    isOwner() &&
+    phaseIsDay &&
+    (flow.status === "idle" ||
+      flow.status === "complete" ||
+      flow.status === "voting" ||
+      (flow.status === "speaking" && Boolean(speaker?.ai)));
+
+  els.startDiscussionBtn.classList.toggle("hidden", !isOwner());
+  els.continueAiStepBtn.classList.toggle("hidden", !isOwner());
+  els.startDiscussionBtn.disabled =
+    !connected || !isOwner() || !phaseIsDay || !["idle", "complete"].includes(flow.status);
+  els.continueAiStepBtn.disabled = !ownerCanContinue;
+  els.continueAiStepBtn.textContent =
+    flow.status === "voting"
+      ? "让 AI 投票"
+      : flow.status === "speaking" && speaker?.ai
+        ? `推进 ${speaker.name}`
+        : "继续 AI 发言";
+
+  els.playerSpeechText.disabled = !myTurn;
+  els.sendSpeechBtn.disabled = !myTurn;
+  els.skipSpeechBtn.disabled = !myTurn;
+  els.sendSpeechBtn.textContent = myTurn ? "发表并结束我的发言" : "等待轮到我";
+
+  els.playerVoteTargetSelect.disabled = !canVote;
+  els.castPlayerVoteBtn.disabled = !canVote || !els.playerVoteTargetSelect.value;
+  els.castAiVotesBtn.classList.toggle("hidden", !isOwner());
+  els.resolveDayVotesBtn.classList.toggle("hidden", !isOwner());
+  els.castAiVotesBtn.disabled = !connected || !isOwner() || !phaseIsDay || flow.status !== "voting";
+  els.resolveDayVotesBtn.disabled = els.castAiVotesBtn.disabled;
+}
+
 function renderSelectors() {
   const playerOptions = game().players
     .map((player) => `<option value="${player.id}">${escapeHtml(player.name)}</option>`)
@@ -880,6 +1000,18 @@ function renderNominations() {
   const aliveCount = game().players.filter((player) => player.alive).length;
   const threshold = Math.ceil(aliveCount / 2);
   els.voteThreshold.textContent = aliveCount ? `处决门槛 ${threshold}` : "门槛 -";
+
+  const currentTarget = els.playerVoteTargetSelect.value;
+  const targets = game().players.filter((player) => player.alive && player.id !== me().playerId);
+  const targetOptions = (targets.length ? targets : game().players.filter((player) => player.alive))
+    .map((player) => `<option value="${player.id}">${escapeHtml(player.name)}</option>`)
+    .join("");
+  els.playerVoteTargetSelect.innerHTML = targetOptions || `<option value="">无可投票目标</option>`;
+  if (targets.some((player) => player.id === currentTarget)) els.playerVoteTargetSelect.value = currentTarget;
+
+  els.hostVoteTools.classList.toggle("hidden", !isStoryteller());
+  els.playerVoteTools.classList.toggle("hidden", isStoryteller());
+
   els.voteList.innerHTML = "";
   for (const player of game().players) {
     const row = document.createElement("div");
@@ -894,6 +1026,7 @@ function renderNominations() {
     `;
     els.voteList.append(row);
   }
+  renderVoteTally(threshold);
   els.nominationLog.innerHTML = game()
     .nominations.slice()
     .reverse()
@@ -902,6 +1035,42 @@ function renderNominations() {
         `<div class="log-entry"><strong>${escapeHtml(nameOf(item.nomineeId))}</strong> 获 ${item.votes.length} 票 <time>${escapeHtml(item.phaseLabel)}</time></div>`
     )
     .join("");
+  renderDayFlowControls();
+}
+
+function renderVoteTally(threshold) {
+  const flow = dayFlow();
+  const votes = Array.isArray(flow.votes) ? flow.votes : [];
+  const myVote = votes.find((vote) => vote.voterId === me().playerId);
+  const groups = new Map();
+  for (const vote of votes) {
+    if (!groups.has(vote.targetId)) groups.set(vote.targetId, []);
+    groups.get(vote.targetId).push(vote.voterId);
+  }
+  const rows = [...groups.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([targetId, voterIds]) => {
+      const voters = voterIds.map(nameOf).join("、");
+      return `
+        <div class="tally-row">
+          <strong>${escapeHtml(nameOf(targetId))}</strong>
+          <span>${voterIds.length}/${threshold || "-"} 票</span>
+          <small>${escapeHtml(voters || "暂无")}</small>
+        </div>
+      `;
+    })
+    .join("");
+  const selfLine = myVote ? `你已投给 ${nameOf(myVote.targetId)}。` : "你尚未投票。";
+  const phaseLine =
+    game().phase === "day" && flow.status === "voting"
+      ? selfLine
+      : flow.status === "speaking"
+        ? "公开发言结束后进入投票。"
+        : "进入白天投票后会显示计票。";
+  els.voteTally.innerHTML = `
+    <div class="vote-status">${escapeHtml(phaseLine)}</div>
+    ${rows || `<div class="tally-row empty">暂无票数。</div>`}
+  `;
 }
 
 function renderNightOrder() {
@@ -1104,6 +1273,47 @@ function sendChat() {
   els.chatText.value = "";
 }
 
+async function sendPlayerSpeech() {
+  if (!isMySpeechTurn()) {
+    showConnection("现在还没有轮到你发言", false);
+    return;
+  }
+  const text = els.playerSpeechText.value.trim();
+  if (text) {
+    await roomAction("sendChat", {
+      from: me().playerId,
+      to: "public",
+      text
+    });
+  }
+  await roomAction("advanceDaySpeaker");
+  els.playerSpeechText.value = "";
+  await refreshState();
+  if (isOwner()) await runAiDayRound();
+}
+
+async function advanceMySpeech() {
+  if (!isMySpeechTurn()) {
+    showConnection("现在还没有轮到你发言", false);
+    return;
+  }
+  await roomAction("advanceDaySpeaker");
+  els.playerSpeechText.value = "";
+  await refreshState();
+  if (isOwner()) await runAiDayRound();
+}
+
+async function castPlayerVote() {
+  const targetId = els.playerVoteTargetSelect.value;
+  if (!targetId) {
+    showConnection("请选择投票对象", false);
+    return;
+  }
+  await roomAction("castVote", { targetId });
+  await refreshState();
+  showConnection(`已投给 ${nameOf(targetId)}`, true, isOwner());
+}
+
 function createPrivateRoomFromSelection() {
   const members = [app.selectedPlayerId, me().playerId].filter(Boolean);
   roomAction("createPrivateRoom", { memberIds: [...new Set(members)] });
@@ -1167,9 +1377,27 @@ async function runAiDayRound() {
     showAiAutomation("当前不是白天，不能推进 AI 白天流程。");
     return;
   }
-  const aliveAiPlayers = game().players.filter((player) => player.ai && player.alive);
-  showAiAutomation(`开始 AI 白天流程：${aliveAiPlayers.length} 名 AI 将依次发言。`);
-  for (const player of aliveAiPlayers) {
+  if (["idle", "complete"].includes(dayFlow().status)) {
+    await roomAction("startDayDiscussion");
+    await refreshState();
+    showAiAutomation(`公开讨论已开始，当前发言：${currentDaySpeaker()?.name || "未知玩家"}。`);
+    setView("game");
+    return;
+  }
+
+  if (dayFlow().status === "speaking") {
+    const player = currentDaySpeaker();
+    if (!player) {
+      await roomAction("advanceDaySpeaker");
+      await refreshState();
+      showAiAutomation("公开发言已推进。");
+      return;
+    }
+    if (!player.ai) {
+      showAiAutomation(`轮到 ${player.name} 发言，AI 推进已暂停，等待真人玩家发表或跳过。`);
+      return;
+    }
+
     try {
       const result = await requestRoomLlm({
         kind: "ai-public-chat",
@@ -1192,10 +1420,27 @@ async function runAiDayRound() {
       });
       showAiAutomation(`${player.name} 发言失败，已使用保底发言：${error.message}`);
     }
+    await roomAction("advanceDaySpeaker");
+    await refreshState();
+    const next = currentDaySpeaker();
+    if (dayFlow().status === "voting") {
+      showAiAutomation("公开发言结束，进入投票。请真人玩家先投票，或由房主让 AI 投票。");
+    } else {
+      showAiAutomation(next?.ai ? `${player.name} 已发言。下一位 AI：${next.name}。` : `${player.name} 已发言。轮到 ${next?.name || "真人玩家"}。`);
+    }
+    setView("game");
+    return;
   }
-  await roomAction("autoResolveDay", {});
+
+  if (game().phase === "day" && dayFlow().status === "voting") {
+    await roomAction("castAiVotes", {});
+    await refreshState();
+    showAiAutomation("AI 已完成投票。等待真人玩家投票；房主确认后再结算投票并入夜。");
+    return;
+  }
+
   setView("game");
-  showAiAutomation("AI 白天流程已完成：发言、提名、投票，并进入下一阶段。");
+  showAiAutomation("AI 白天推进已暂停。");
 }
 
 async function resolveNight() {
@@ -1364,6 +1609,20 @@ function myPlayer() {
   return game().players.find((player) => player.id === me().playerId);
 }
 
+function dayFlow() {
+  return game().dayFlow || { status: "idle", speakerQueue: [], speakerIndex: 0, votes: [], startedAt: 0 };
+}
+
+function currentDaySpeaker() {
+  const flow = dayFlow();
+  return game().players.find((player) => player.id === flow.speakerQueue?.[flow.speakerIndex]);
+}
+
+function isMySpeechTurn() {
+  const speaker = currentDaySpeaker();
+  return game().phase === "day" && dayFlow().status === "speaking" && speaker?.id === me().playerId;
+}
+
 function game() {
   return app.state?.game || {
     scripts: window.BLOOD_DATA.DEFAULT_SCRIPTS,
@@ -1377,6 +1636,7 @@ function game() {
     day: 0,
     night: 0,
     nominations: [],
+    dayFlow: { status: "idle", speakerQueue: [], speakerIndex: 0, votes: [], startedAt: 0 },
     chats: [],
     rooms: [],
     log: []

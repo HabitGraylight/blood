@@ -253,25 +253,54 @@
           </div>
 
           <div class="lower-grid">
+            <section class="panel public-discussion">
+              <div class="section-heading">
+                <h2>公开讨论</h2>
+                <span id="dayFlowStatus">等待白天</span>
+              </div>
+              <div id="publicChatPreview" class="public-chat-preview"></div>
+              <textarea id="playerSpeechText" rows="3" placeholder="轮到你时，在这里公开发言。"></textarea>
+              <div class="button-row">
+                <button id="startDiscussionBtn" type="button">开始公开发言</button>
+                <button id="continueAiStepBtn" type="button">继续 AI 发言</button>
+                <button id="sendSpeechBtn" type="button">发表并结束我的发言</button>
+                <button id="skipSpeechBtn" class="ghost" type="button">跳过我的发言</button>
+              </div>
+            </section>
+
             <section class="panel nominations">
               <div class="section-heading">
                 <h2>提名与投票</h2>
                 <span id="voteThreshold">门槛 -</span>
               </div>
-              <div class="form-grid">
+              <div id="playerVoteTools" class="player-vote-box">
                 <label>
-                  提名者
-                  <select id="nominatorSelect"></select>
+                  我的投票对象
+                  <select id="playerVoteTargetSelect"></select>
                 </label>
-                <label>
-                  被提名者
-                  <select id="nomineeSelect"></select>
-                </label>
+                <div class="button-row">
+                  <button id="castPlayerVoteBtn" type="button">提交我的投票</button>
+                  <button id="castAiVotesBtn" type="button">让 AI 投票</button>
+                  <button id="resolveDayVotesBtn" type="button">结算投票并入夜</button>
+                </div>
               </div>
-              <div id="voteList" class="vote-list"></div>
-              <div class="button-row">
-                <button id="recordVoteBtn" type="button">记录投票</button>
-                <button id="executeLeaderBtn" type="button">处决当前最高票</button>
+              <div id="voteTally" class="vote-tally"></div>
+              <div id="hostVoteTools" class="host-vote-tools">
+                <div class="form-grid">
+                  <label>
+                    提名者
+                    <select id="nominatorSelect"></select>
+                  </label>
+                  <label>
+                    被提名者
+                    <select id="nomineeSelect"></select>
+                  </label>
+                </div>
+                <div id="voteList" class="vote-list"></div>
+                <div class="button-row">
+                  <button id="recordVoteBtn" type="button">记录投票</button>
+                  <button id="executeLeaderBtn" type="button">处决当前最高票</button>
+                </div>
               </div>
               <div id="nominationLog" class="compact-log"></div>
             </section>

@@ -741,10 +741,91 @@ h2 {
   gap: 18px;
 }
 
+.public-discussion,
 .nominations,
 .night-order,
 .chat-panel {
   padding: 16px;
+}
+
+.public-discussion,
+.player-vote-box,
+.host-vote-tools {
+  display: grid;
+  gap: 10px;
+}
+
+.public-chat-preview {
+  min-height: 180px;
+  max-height: 280px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.public-chat-line {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #141821;
+  line-height: 1.45;
+}
+
+.public-chat-line.mine {
+  border-color: rgba(214, 170, 91, 0.42);
+}
+
+.public-chat-line.empty {
+  color: var(--muted);
+}
+
+.public-chat-line p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.player-vote-box {
+  padding: 10px;
+  border: 1px solid rgba(93, 187, 137, 0.28);
+  border-radius: 8px;
+  background: rgba(93, 187, 137, 0.08);
+}
+
+.vote-tally {
+  display: grid;
+  gap: 7px;
+}
+
+.vote-status,
+.tally-row {
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #141821;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.vote-status {
+  color: #dbeedd;
+  border-color: rgba(93, 187, 137, 0.24);
+}
+
+.tally-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+}
+
+.tally-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.tally-row.empty {
+  color: var(--muted);
 }
 
 .form-grid {

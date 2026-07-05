@@ -132,7 +132,7 @@ test("AI players join as real players, receive roles, and can only be driven by 
   assert.equal(ben.roomId, host.roomId);
 });
 
-test("AI day automation records a nomination vote and advances to night", async () => {
+test("AI day automation pauses for humans, records AI votes, and waits for explicit execution", async () => {
   const store = createRoomStore();
   const host = store.createRoom("AI Day", "Host");
   store.applyAction(host.roomId, host.clientId, host.token, "addAiPlayer", { name: "AI 1" });
@@ -148,11 +148,68 @@ test("AI day automation records a nomination vote and advances to night", async 
   assert.equal(dayState.game.phase, "day");
 
   store.applyAction(host.roomId, host.clientId, host.token, "autoResolveDay", {});
+  const started = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(started.game.dayFlow.status, "speaking");
+  assert.equal(started.game.dayFlow.speakerQueue[started.game.dayFlow.speakerIndex], started.me.playerId);
+
+  store.applyAction(host.roomId, host.clientId, host.token, "autoResolveDay", {});
+  const waitingForHost = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(waitingForHost.game.phase, "day", "AI automation must not skip a human speaker");
+  assert.equal(waitingForHost.game.dayFlow.status, "speaking");
+
+  store.applyAction(host.roomId, host.clientId, host.token, "advanceDaySpeaker", {});
+  for (let index = 0; index < 4; index += 1) {
+    store.applyAction(host.roomId, host.clientId, host.token, "autoResolveDay", {});
+  }
+  const voting = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(voting.game.phase, "day");
+  assert.equal(voting.game.dayFlow.status, "voting");
+
+  store.applyAction(host.roomId, host.clientId, host.token, "autoResolveDay", {});
+  const aiVoted = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(aiVoted.game.phase, "day", "AI votes do not execute anyone automatically");
+  assert.equal(aiVoted.game.dayFlow.votes.length, 4);
+
+  store.applyAction(host.roomId, host.clientId, host.token, "resolveDayVotes", {});
   const nightState = store.getState(host.roomId, host.clientId, host.token);
 
   assert.equal(nightState.game.phase, "night");
   assert.equal(nightState.game.nominations.length, 1);
   assert.ok(nightState.game.nominations[0].votes.length >= 1);
+});
+
+test("a human player can cast a simple public vote and see it in day flow", async () => {
+  const store = createRoomStore();
+  const host = store.createRoom("Player Vote", "Host");
+  const [ada, ben, cy, dee] = await Promise.all(
+    ["Ada", "Ben", "Cy", "Dee"].map((name) => Promise.resolve(store.joinRoom(host.roomId, name)))
+  );
+  store.applyAction(host.roomId, host.clientId, host.token, "autoBag", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "dealRoles", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "startFirstNight", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "resolveNight", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "startDayDiscussion", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "advanceDaySpeaker", {});
+  store.applyAction(host.roomId, ada.clientId, ada.token, "advanceDaySpeaker", {});
+  store.applyAction(host.roomId, ben.clientId, ben.token, "advanceDaySpeaker", {});
+  store.applyAction(host.roomId, cy.clientId, cy.token, "advanceDaySpeaker", {});
+  store.applyAction(host.roomId, dee.clientId, dee.token, "advanceDaySpeaker", {});
+
+  const votingState = store.getState(host.roomId, ada.clientId, ada.token);
+  const adaPlayer = votingState.game.players.find((player) => player.name === "Ada");
+  const benPlayer = votingState.game.players.find((player) => player.name === "Ben");
+  assert.equal(votingState.game.dayFlow.status, "voting");
+
+  store.applyAction(host.roomId, ada.clientId, ada.token, "castVote", { targetId: benPlayer.id });
+  const afterVote = store.getState(host.roomId, ada.clientId, ada.token);
+  assert.deepEqual(afterVote.game.dayFlow.votes, [
+    {
+      voterId: adaPlayer.id,
+      targetId: benPlayer.id,
+      at: afterVote.game.dayFlow.votes[0].at,
+      ai: false
+    }
+  ]);
 });
 
 test("night automation skips imp kill on first night and kills on later nights", async () => {
