@@ -102,6 +102,8 @@ function bindElements() {
     "phaseTitle",
     "startFirstNightBtn",
     "advancePhaseBtn",
+    "runAiDayBtn",
+    "resolveNightBtn",
     "publicViewBtn",
     "townCircle",
     "winCondition",
@@ -132,12 +134,19 @@ function bindElements() {
     "addReminderBtn",
     "storyLog",
     "clearLogBtn",
+    "storyLogSection",
+    "playerControlSection",
+    "llmToolsSection",
     "llmState",
     "llmInstruction",
     "llmOutput",
     "askLlmBtn",
     "summarizeChatBtn",
     "askSelectedAiBtn",
+    "aiAutomationSection",
+    "aiAutomationOutput",
+    "runAiDaySideBtn",
+    "resolveNightSideBtn",
     "chatMessages",
     "chatFromSelect",
     "chatToSelect",
@@ -197,7 +206,14 @@ function bindEvents() {
 
   els.startFirstNightBtn.addEventListener("click", () => hostAction("startFirstNight"));
   els.advancePhaseBtn.addEventListener("click", () => hostAction("advancePhase"));
-  els.markNightDoneBtn.addEventListener("click", () => hostAction("advancePhase"));
+  els.runAiDayBtn.addEventListener("click", runAiDayRound);
+  els.resolveNightBtn.addEventListener("click", resolveNight);
+  els.runAiDaySideBtn.addEventListener("click", runAiDayRound);
+  els.resolveNightSideBtn.addEventListener("click", resolveNight);
+  els.markNightDoneBtn.addEventListener("click", () => {
+    if (isStoryteller()) hostAction("advancePhase");
+    else resolveNight();
+  });
   els.publicViewBtn.addEventListener("click", () => {
     app.publicView = !app.publicView;
     renderAll();
@@ -545,15 +561,16 @@ function renderPermissions() {
     "resetAppBtn",
     "startFirstNightBtn",
     "advancePhaseBtn",
+    "runAiDayBtn",
+    "resolveNightBtn",
+    "runAiDaySideBtn",
+    "resolveNightSideBtn",
     "recordVoteBtn",
     "executeLeaderBtn",
-    "llmNightBtn",
     "markNightDoneBtn",
-    "clearLogBtn",
-    "askLlmBtn",
-    "summarizeChatBtn",
     "askSelectedAiBtn"
   ];
+  const storytellerToolIds = ["llmNightBtn", "clearLogBtn", "askLlmBtn", "summarizeChatBtn"];
   const storytellerIds = [
     "roleAssignSelect",
     "shownRoleSelect",
@@ -569,6 +586,9 @@ function renderPermissions() {
   for (const id of ownerIds) {
     if (els[id]) els[id].disabled = !connected || !owner;
   }
+  for (const id of storytellerToolIds) {
+    if (els[id]) els[id].disabled = !connected || !storyteller;
+  }
   for (const id of storytellerIds) {
     if (els[id]) els[id].disabled = !connected || !storyteller;
   }
@@ -581,6 +601,18 @@ function renderPermissions() {
   els.guideDealRolesBtn.disabled = !connected || !owner;
   els.guideStartNightBtn.disabled = !connected || !owner;
   els.askSelectedAiBtn.disabled = !connected || !owner || !selectedPlayer()?.ai;
+  els.runAiDayBtn.disabled = !connected || !owner || game().phase !== "day";
+  els.runAiDaySideBtn.disabled = els.runAiDayBtn.disabled;
+  els.resolveNightBtn.disabled = !connected || !owner || (game().phase !== "firstNight" && game().phase !== "night");
+  els.resolveNightSideBtn.disabled = els.resolveNightBtn.disabled;
+  if (connected && owner && !storyteller && (game().phase === "firstNight" || game().phase === "night")) {
+    els.advancePhaseBtn.disabled = true;
+  }
+  els.llmToolsSection.classList.toggle("hidden", connected && !storyteller);
+  els.storyLogSection.classList.toggle("hidden", connected && !storyteller);
+  els.playerControlSection.classList.toggle("hidden", connected && !storyteller);
+  els.aiAutomationSection.classList.toggle("hidden", !connected || !owner);
+  els.llmNightBtn.classList.toggle("hidden", connected && !storyteller);
   document.querySelector(".setup-panel").classList.toggle("readonly", connected && !storyteller);
   document.querySelector(".control-panel").classList.toggle("readonly", connected && !storyteller);
 }
@@ -875,6 +907,7 @@ function renderNominations() {
 function renderNightOrder() {
   const isFirst = game().phase === "firstNight" || game().night <= 1;
   els.nightKind.textContent = isFirst ? "首夜" : "其他夜";
+  els.markNightDoneBtn.textContent = isStoryteller() ? "本夜结束" : "结算本夜";
   const order = activeScript().nightOrder?.[isFirst ? "first" : "other"] || [];
   const inPlay = new Set(game().players.map((player) => player.roleId || player.shownRoleId).filter(Boolean));
   els.nightOrderList.innerHTML = "";
@@ -1127,6 +1160,58 @@ async function askSelectedAiPlayer() {
   } catch (error) {
     showLlmOutput(`AI 玩家发言失败：${error.message}`);
   }
+}
+
+async function runAiDayRound() {
+  if (!isOwner() || game().phase !== "day") {
+    showAiAutomation("当前不是白天，不能推进 AI 白天流程。");
+    return;
+  }
+  const aliveAiPlayers = game().players.filter((player) => player.ai && player.alive);
+  showAiAutomation(`开始 AI 白天流程：${aliveAiPlayers.length} 名 AI 将依次发言。`);
+  for (const player of aliveAiPlayers) {
+    try {
+      const result = await requestRoomLlm({
+        kind: "ai-public-chat",
+        playerId: player.id,
+        instruction:
+          "请阅读当前公开发言、投票和存活状态，作为玩家给出一段白天公开发言。可以怀疑、回应、拉票或防守，但不要自曝隐藏信息。",
+        providerId: els.llmEndpoint.value.trim(),
+        presetId: player.aiProfile?.presetId || els.aiPlayerWisdomSelect.value || "flash",
+        model: player.aiProfile?.model || ""
+      });
+      const text = result.promptOnly
+        ? `${player.name}：我会先根据公开发言观察票型，暂时不把话说死。`
+        : String(result.text || "").trim();
+      if (text) await roomAction("sendAiChat", { playerId: player.id, to: "public", text });
+    } catch (error) {
+      await roomAction("sendAiChat", {
+        playerId: player.id,
+        to: "public",
+        text: "我先根据公开信息保留意见，等投票看票型。"
+      });
+      showAiAutomation(`${player.name} 发言失败，已使用保底发言：${error.message}`);
+    }
+  }
+  await roomAction("autoResolveDay", {});
+  setView("game");
+  showAiAutomation("AI 白天流程已完成：发言、提名、投票，并进入下一阶段。");
+}
+
+async function resolveNight() {
+  if (!isOwner()) return;
+  if (game().phase !== "firstNight" && game().phase !== "night") {
+    showAiAutomation("当前不是夜晚。");
+    return;
+  }
+  await roomAction("resolveNight", {});
+  setView("game");
+  showAiAutomation("夜晚行动已结算，并进入白天。");
+}
+
+function showAiAutomation(text) {
+  if (els.aiAutomationOutput) els.aiAutomationOutput.textContent = text;
+  showConnection(text, hasRoom());
 }
 
 async function requestRoomLlm(payload) {

@@ -273,6 +273,8 @@ function mutateRoom(room, client, type, payload) {
     "clearRoles",
     "startFirstNight",
     "advancePhase",
+    "autoResolveDay",
+    "resolveNight",
     "recordVote",
     "executeLeader",
     "replaceScript",
@@ -352,6 +354,12 @@ function mutateRoom(room, client, type, payload) {
       break;
     case "advancePhase":
       advancePhase(room);
+      break;
+    case "autoResolveDay":
+      autoResolveDay(room);
+      break;
+    case "resolveNight":
+      resolveNight(room);
       break;
     case "recordVote":
       recordVote(room, payload);
@@ -514,6 +522,143 @@ function advancePhase(room) {
     game.phase = "night";
     game.night += 1;
     log(room, "阶段", `入夜，进入第 ${game.night} 夜。`, "public");
+  }
+}
+
+function autoResolveDay(room) {
+  const game = room.game;
+  if (game.phase !== "day") {
+    log(room, "AI 流程", "当前不是白天，不能自动提名投票。", "public");
+    return;
+  }
+  const alive = game.players.filter((player) => player.alive);
+  if (alive.length < 3) {
+    log(room, "AI 流程", "存活人数过少，跳过自动提名。", "public");
+    advancePhase(room);
+    return;
+  }
+
+  const nominator = alive.find((player) => player.ai && !player.nominatedToday) || alive.find((player) => !player.nominatedToday);
+  const nominee = chooseNomineeFromPublicPressure(room, nominator);
+  if (!nominator || !nominee) {
+    log(room, "AI 流程", "没有可用提名对象，白天结束。", "public");
+    advancePhase(room);
+    return;
+  }
+
+  const votes = alive
+    .filter((player) => player.ai || player.id === nominator.id)
+    .filter((player) => player.id !== nominee.id)
+    .map((player) => player.id);
+  recordVote(room, { nominatorId: nominator.id, nomineeId: nominee.id, votes });
+  executeLeader(room);
+  if (game.phase === "day") advancePhase(room);
+}
+
+function chooseNomineeFromPublicPressure(room, nominator) {
+  const alive = room.game.players.filter((player) => player.alive && player.id !== nominator?.id);
+  if (!alive.length) return null;
+  const publicText = room.game.chats
+    .filter((message) => message.kind === "public")
+    .slice(-20)
+    .map((message) => message.text)
+    .join("\n");
+  const scored = alive.map((player) => ({
+    player,
+    score: countMentions(publicText, player.name) + (player.wasNominatedToday ? -100 : 0)
+  }));
+  scored.sort((a, b) => b.score - a.score || a.player.seat - b.player.seat);
+  return scored[0].player;
+}
+
+function countMentions(text, name) {
+  if (!text || !name) return 0;
+  return text.split(name).length - 1;
+}
+
+function resolveNight(room) {
+  const game = room.game;
+  if (game.phase !== "firstNight" && game.phase !== "night") {
+    log(room, "夜晚", "当前不是夜晚，不能结算夜晚行动。", "public");
+    return;
+  }
+  resetNightConditions(room);
+
+  const poisoner = livingRolePlayer(room, "poisoner");
+  if (poisoner) {
+    const target = chooseAliveTarget(room, [poisoner.id]);
+    if (target) {
+      target.poisoned = true;
+      target.reminders.push("本夜被投毒");
+      log(room, "夜晚行动", `${poisoner.name} 完成了投毒选择。`);
+    }
+  }
+
+  const monk = livingRolePlayer(room, "monk");
+  const monkProtected = monk ? chooseAliveTarget(room, [monk.id]) : null;
+  if (monkProtected) {
+    monkProtected.reminders.push("本夜受僧侣保护");
+    log(room, "夜晚行动", `${monk.name} 完成了保护选择。`);
+  }
+
+  const demon = livingRolePlayer(room, "imp");
+  if (demon && game.phase !== "firstNight") {
+    const target = chooseDemonTarget(room, demon, monkProtected);
+    if (!target) {
+      log(room, "小恶魔", "小恶魔没有可攻击目标。", "public");
+    } else if (target.id === monkProtected?.id || target.roleId === "soldier") {
+      log(room, "小恶魔", "夜晚有人被攻击，但没有死亡。", "public");
+    } else {
+      killPlayer(room, target.id, "小恶魔");
+    }
+  } else if (demon) {
+    log(room, "小恶魔", "首夜小恶魔不杀人。", "public");
+  }
+
+  resolveInfoRoles(room);
+  advancePhase(room);
+}
+
+function resetNightConditions(room) {
+  room.game.players = room.game.players.map((player) => ({
+    ...player,
+    poisoned: false,
+    drunk: false,
+    reminders: (player.reminders || []).filter((item) => !String(item).startsWith("本夜"))
+  }));
+}
+
+function livingRolePlayer(room, roleId) {
+  return room.game.players.find((player) => player.alive && player.roleId === roleId);
+}
+
+function chooseAliveTarget(room, excludeIds = []) {
+  return room.game.players
+    .filter((player) => player.alive && !excludeIds.includes(player.id))
+    .sort((a, b) => a.seat - b.seat)[0];
+}
+
+function chooseDemonTarget(room, demon, protectedPlayer) {
+  const candidates = room.game.players.filter((player) => player.alive && player.id !== demon.id);
+  const unprotectedGood = candidates.find((player) => player.alignment === "good" && player.id !== protectedPlayer?.id && player.roleId !== "soldier");
+  return unprotectedGood || candidates.find((player) => player.id !== protectedPlayer?.id) || candidates[0] || null;
+}
+
+function resolveInfoRoles(room) {
+  for (const player of room.game.players) {
+    if (!player.alive || player.poisoned || player.drunk) continue;
+    if (player.roleId === "fortuneteller") {
+      player.reminders.push("本夜获得占卜结果");
+      log(room, "夜晚行动", `${player.name} 完成了占卜选择。`);
+    }
+    if (player.roleId === "empath") {
+      player.reminders.push("本夜获得共情结果");
+      log(room, "夜晚行动", `${player.name} 获得了共情信息。`);
+    }
+    if (player.roleId === "undertaker") {
+      player.reminders.push("本夜获得送葬者信息");
+      log(room, "夜晚行动", `${player.name} 获得了送葬者信息。`);
+    }
   }
 }
 

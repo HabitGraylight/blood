@@ -235,6 +235,8 @@
             <div class="phase-actions">
               <button id="startFirstNightBtn" type="button">开始首夜</button>
               <button id="advancePhaseBtn" type="button">推进阶段</button>
+              <button id="runAiDayBtn" type="button">AI 推进白天</button>
+              <button id="resolveNightBtn" type="button">结算夜晚</button>
               <button id="publicViewBtn" type="button">公开视角</button>
             </div>
           </div>
@@ -297,7 +299,7 @@
             <div id="selfCard" class="selected-card empty">创建或加入房间后显示。</div>
           </section>
 
-          <section class="section selected-player">
+          <section id="playerControlSection" class="section selected-player">
             <div class="section-heading">
               <h2>玩家控制</h2>
               <span id="selectedSeat">未选择</span>
@@ -338,7 +340,7 @@
             </div>
           </section>
 
-          <section class="section">
+          <section id="storyLogSection" class="section">
             <div class="section-heading">
               <h2>说书人日志</h2>
               <button id="clearLogBtn" class="ghost small" type="button">清空</button>
@@ -346,7 +348,7 @@
             <div id="storyLog" class="story-log"></div>
           </section>
 
-          <section class="section">
+          <section id="llmToolsSection" class="section">
             <div class="section-heading">
               <h2>LLM 操作</h2>
               <span id="llmState">未启用</span>
@@ -357,6 +359,18 @@
               <button id="askLlmBtn" type="button">请求建议</button>
               <button id="summarizeChatBtn" type="button">总结私聊</button>
               <button id="askSelectedAiBtn" type="button">让选中 AI 发言</button>
+            </div>
+          </section>
+
+          <section id="aiAutomationSection" class="section">
+            <div class="section-heading">
+              <h2>AI 自动化</h2>
+              <span>房主控制</span>
+            </div>
+            <div id="aiAutomationOutput" class="llm-output">AI 会先读取公开聊天发言，再自动发言、提名投票或结算夜晚。</div>
+            <div class="button-row">
+              <button id="runAiDaySideBtn" type="button">AI 推进白天</button>
+              <button id="resolveNightSideBtn" type="button">结算夜晚</button>
             </div>
           </section>
         </aside>

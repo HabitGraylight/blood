@@ -132,6 +132,59 @@ test("AI players join as real players, receive roles, and can only be driven by 
   assert.equal(ben.roomId, host.roomId);
 });
 
+test("AI day automation records a nomination vote and advances to night", async () => {
+  const store = createRoomStore();
+  const host = store.createRoom("AI Day", "Host");
+  store.applyAction(host.roomId, host.clientId, host.token, "addAiPlayer", { name: "AI 1" });
+  store.applyAction(host.roomId, host.clientId, host.token, "addAiPlayer", { name: "AI 2" });
+  store.applyAction(host.roomId, host.clientId, host.token, "addAiPlayer", { name: "AI 3" });
+  store.applyAction(host.roomId, host.clientId, host.token, "addAiPlayer", { name: "AI 4" });
+  store.applyAction(host.roomId, host.clientId, host.token, "autoBag", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "dealRoles", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "startFirstNight", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "resolveNight", {});
+
+  const dayState = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(dayState.game.phase, "day");
+
+  store.applyAction(host.roomId, host.clientId, host.token, "autoResolveDay", {});
+  const nightState = store.getState(host.roomId, host.clientId, host.token);
+
+  assert.equal(nightState.game.phase, "night");
+  assert.equal(nightState.game.nominations.length, 1);
+  assert.ok(nightState.game.nominations[0].votes.length >= 1);
+});
+
+test("night automation skips imp kill on first night and kills on later nights", async () => {
+  const store = createRoomStore();
+  const host = store.createRoom("Night Kill", "Host");
+  await Promise.all(["Ada", "Ben", "Cy", "Dee"].map((name) => Promise.resolve(store.joinRoom(host.roomId, name))));
+  const state = store.getState(host.roomId, host.clientId, host.token);
+  const [demon, goodA, goodB, goodC, goodD] = state.game.players;
+  store.applyAction(host.roomId, host.clientId, host.token, "updatePlayer", {
+    playerId: demon.id,
+    patch: { roleId: "imp", shownRoleId: "imp", alignment: "evil" }
+  });
+  for (const player of [goodA, goodB, goodC, goodD]) {
+    store.applyAction(host.roomId, host.clientId, host.token, "updatePlayer", {
+      playerId: player.id,
+      patch: { roleId: "chef", shownRoleId: "chef", alignment: "good" }
+    });
+  }
+
+  store.applyAction(host.roomId, host.clientId, host.token, "startFirstNight", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "resolveNight", {});
+  const afterFirstNight = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(afterFirstNight.game.players.filter((player) => !player.alive).length, 0);
+  assert.equal(afterFirstNight.game.phase, "day");
+
+  store.applyAction(host.roomId, host.clientId, host.token, "advancePhase", {});
+  store.applyAction(host.roomId, host.clientId, host.token, "resolveNight", {});
+  const afterSecondNight = store.getState(host.roomId, host.clientId, host.token);
+  assert.equal(afterSecondNight.game.phase, "day");
+  assert.equal(afterSecondNight.game.players.filter((player) => !player.alive).length, 1);
+});
+
 test("private room chat is visible only to room members and the host", async () => {
   const store = createRoomStore();
   const host = store.createRoom("Chat Test", "Host");
