@@ -8,7 +8,7 @@ import { createRng, randomSeed } from "../core/rng.js";
 const HUMAN_ID = "human";
 
 export class LocalSession {
-  constructor({ playerName, playerCount, seed }) {
+  constructor({ playerName, playerCount, scriptId, seed }) {
     this.listeners = new Set();
     this.isHost = true; // 单机模式下真人拥有房主权限(宣布黄昏)
     this.mode = "single";
@@ -24,7 +24,8 @@ export class LocalSession {
       id: HUMAN_ID, name: playerName || "你", isHuman: true, persona: null
     });
 
-    this.core = new GameCore(players, () => this._notify());
+    this.scriptId = scriptId || "trouble-brewing";
+    this.core = new GameCore(players, () => this._notify(), { scriptId: this.scriptId });
     this.mySeat = this.core.seatOf(HUMAN_ID);
     this.core.start();
   }

@@ -7,16 +7,14 @@
  *
  * 留空(null)时,多人联机入口会禁用,单机模式不受影响。
  */
-export const firebaseConfig = null;
 
-/* 示例:
 export const firebaseConfig = {
-  apiKey: "AIza....",
-  authDomain: "your-app.firebaseapp.com",
-  databaseURL: "https://your-app-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "your-app",
-  storageBucket: "your-app.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abcdef"
+  apiKey: "AIzaSyB6CdxFUaIFWmAmX2bszPYrGY8m55gBTbY",
+  authDomain: "xueranzhonglou-6b514.firebaseapp.com",
+  databaseURL: "https://xueranzhonglou-6b514-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "xueranzhonglou-6b514",
+  storageBucket: "xueranzhonglou-6b514.firebasestorage.app",
+  messagingSenderId: "617687688469",
+  appId: "1:617687688469:web:b269ad1f23ae0ae3ddf51c"
 };
-*/
+

@@ -4,6 +4,7 @@ import { drawRoles } from "../src/core/setup.js";
 import { resolveVoteResult, checkWin } from "../src/core/rules.js";
 import { createRng } from "../src/core/rng.js";
 import { ROLES, TEAM, SETUP_TABLE } from "../src/core/data/roles.js";
+import { playerView, storytellerView } from "../src/core/view.js";
 
 function makePlayers(n) {
   return Array.from({ length: n }, (_, i) => ({
@@ -258,6 +259,67 @@ describe("完整对局流程", () => {
     expect(engine.state.phase).toBe("night"); // 处决后入夜
   });
 
+
+  it("猩红夫人在恶魔死亡前正好5人存活时变身", () => {
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 201,
+      fixedRoles: ["chef", "soldier", "scarletwoman", "baron", "imp"]
+    });
+    autoNight(engine);
+    engine.dispatch({ type: "nominate", nominator: 0, nominee: 4 });
+    while (engine.state.currentVote) {
+      const seat = engine.state.currentVote.order[engine.state.currentVote.index];
+      engine.dispatch({ type: "vote", seat, up: true });
+    }
+    engine.dispatch({ type: "endDay" });
+    expect(engine.state.winner).toBe(null);
+    expect(engine.state.players[2].role).toBe("imp");
+  });
+
+  it("管家在主人稍后会投票时可以计票", () => {
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 202,
+      fixedRoles: ["butler", "chef", "soldier", "baron", "imp"]
+    });
+    autoNight(engine);
+    engine.state.players[0].master = 1;
+    engine.dispatch({ type: "nominate", nominator: 2, nominee: 4 });
+    engine.dispatch({ type: "vote", seat: engine.state.currentVote.order[0], up: "master-up" });
+    while (engine.state.currentVote) {
+      const seat = engine.state.currentVote.order[engine.state.currentVote.index];
+      engine.dispatch({ type: "vote", seat, up: seat === 0 || seat === 1 });
+    }
+    const last = engine.state.nominations.at(-1);
+    expect(last.voters).toContain(0);
+    expect(last.voters).toContain(1);
+  });
+
+  it("占卜师红鲱鱼可以是自己", () => {
+    let found = false;
+    for (let seed = 300; seed < 380; seed++) {
+      const engine = GameEngine.create(makePlayers(5), {
+        seed,
+        fixedRoles: ["fortuneteller", "chef", "soldier", "baron", "imp"]
+      });
+      if (engine.state.players[0].redHerring) {
+        found = true;
+        break;
+      }
+    }
+    expect(found).toBe(true);
+  });
+
+  it("非杀手声称开枪不会消耗圣女能力", () => {
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 203,
+      fixedRoles: ["virgin", "chef", "soldier", "baron", "imp"]
+    });
+    autoNight(engine);
+    const shot = engine.dispatch({ type: "slayerShot", seat: 0, target: 4 });
+    expect(shot.ok).toBe(true);
+    expect(engine.state.players[0].usedAbility).toBe(false);
+    expect(engine.state.players[0].slayerUsed).toBe(true);
+  });
   it("序列化后可恢复继续游戏", () => {
     const engine = GameEngine.create(makePlayers(7), { seed: 31, fixedRoles: ROLES_7 });
     autoNight(engine);
@@ -268,6 +330,18 @@ describe("完整对局流程", () => {
     expect(restored.state.dayStage).toBe("voting");
   });
 
+
+  it("说书人视图能看完整魔典,玩家视图不能看他人身份", () => {
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 204,
+      fixedRoles: ["chef", "soldier", "scarletwoman", "baron", "imp"]
+    });
+    const st = storytellerView(engine.state);
+    const pv = playerView(engine.state, 0);
+    expect(st.isStoryteller).toBe(true);
+    expect(st.seats[4].role).toBe("imp");
+    expect(pv.seats[4].revealedRole).toBe(null);
+  });
   it("随机对局最终总会分出胜负", () => {
     for (let seed = 100; seed < 105; seed++) {
       const engine = GameEngine.create(makePlayers(9), { seed });

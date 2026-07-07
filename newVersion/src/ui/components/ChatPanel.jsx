@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { Icon } from "./Icon.jsx";
 
 /** 右侧面板:公共聊天 / 私聊 / 事件记录 */
 export function ChatPanel({ view, chat, session }) {
@@ -30,11 +31,11 @@ export function ChatPanel({ view, chat, session }) {
   return (
     <div className="chat-panel">
       <div className="chat-tabs">
-        <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>💬 广场</button>
+        <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}><Icon name="chat" /> 广场</button>
         <button className={tab === "whisper" ? "active" : ""} onClick={() => setTab("whisper")}>
-          🤫 私聊{whisperMsgs.length ? ` (${whisperMsgs.length})` : ""}
+          <Icon name="whisper" /> 私聊{whisperMsgs.length ? ` (${whisperMsgs.length})` : ""}
         </button>
-        <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}>📜 事件</button>
+        <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}><Icon name="log" /> 事件</button>
       </div>
 
       <div className="chat-scroll" ref={scrollRef}>

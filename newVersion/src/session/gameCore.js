@@ -3,7 +3,7 @@
  * 单机模式直接使用;联机模式由房主端使用并把视图发布到 Firebase。
  */
 import { GameEngine } from "../core/engine.js";
-import { playerView } from "../core/view.js";
+import { playerView, storytellerView } from "../core/view.js";
 import { AIPlayer } from "../ai/aiController.js";
 import { AIDriver } from "./aiDriver.js";
 import { createRng, randomSeed } from "../core/rng.js";
@@ -15,10 +15,16 @@ export class GameCore {
    */
   constructor(players, onUpdate, options = {}) {
     this.onUpdate = onUpdate;
+    this.scriptId = options.scriptId || "trouble-brewing";
+    this.storytellerId = options.storytellerId || null;
     this.chat = []; // { id, fromSeat, fromName, to, text, ts }
     this.chatSeq = 0;
 
-    this.engine = GameEngine.create(players, { seed: options.seed });
+    this.engine = GameEngine.create(players, {
+      seed: options.seed,
+      scriptId: this.scriptId,
+      storytellerMode: this.storytellerId ? "human" : "auto"
+    });
     this.rng = createRng(randomSeed());
 
     this.aiPlayers = new Map();
@@ -57,9 +63,18 @@ export class GameCore {
   }
 
   getViewFor(playerId) {
+    if (playerId === this.storytellerId) return this.getStorytellerView();
     const seat = this.seatOf(playerId);
     if (seat < 0) return null;
     return playerView(this.engine.state, seat);
+  }
+
+  getStorytellerView() {
+    return storytellerView(this.engine.state);
+  }
+
+  getAllChat() {
+    return this.chat;
   }
 
   /** 某座位可见的聊天:公开消息 + 与自己相关的私聊 */
@@ -109,6 +124,25 @@ export class GameCore {
     return res;
   }
 
+
+  dispatchStoryteller(action) {
+    const allowed = new Set([
+      "storytellerSetInfoOverride",
+      "storytellerSetRegistration",
+      "storytellerSetNightDeath",
+      "storytellerResolveMayor",
+      "storytellerAdvancePhase",
+      "endDay"
+    ]);
+    if (!allowed.has(action.type)) return { ok: false, error: "该动作不是说书人动作" };
+    const safe = action.type === "endDay" ? { type: "endDay" } : { ...action };
+    const res = this.engine.dispatch(safe);
+    if (res.ok) {
+      this.onUpdate();
+      this.driver.tick();
+    }
+    return res;
+  }
   /** 发送聊天(公开或私聊)。返回 {ok} */
   chatFrom(playerId, text, toSeat = null) {
     const seat = this.seatOf(playerId);

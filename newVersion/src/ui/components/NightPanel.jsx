@@ -1,4 +1,5 @@
 import React from "react";
+import { Icon } from "./Icon.jsx";
 
 /**
  * 夜晚面板:
@@ -24,7 +25,7 @@ export function NightPanel({ view, select, confirm }) {
   return (
     <div className="night-action-bar">
       <div className="night-action-inner">
-        <span className="night-prompt">🌙 {pa.prompt}</span>
+        <span className="night-prompt"><Icon name="night" /> {pa.prompt}</span>
         <span className="night-picked">
           {picked.length
             ? `已选: ${picked.map((s) => view.seats[s].name).join("、")}`

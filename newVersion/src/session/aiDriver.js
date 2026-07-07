@@ -105,10 +105,11 @@ export class AIDriver {
     const s = this.engine.state;
     if (!this.dayPlan || this.dayPlan.day !== s.day || this.dayPlan.night !== s.night) {
       const aiSeats = [...this.aiPlayers.keys()].filter((seat) => s.players[seat].alive);
+      const rounds = ["信息交换", "质询回应", "提名前总结"];
       this.dayPlan = {
         day: s.day,
         night: s.night,
-        speakQueue: this.rng.shuffle(aiSeats),
+        speakQueue: rounds.flatMap((round) => this.rng.shuffle(aiSeats).map((seat) => ({ seat, round }))),
         nomQueue: this.rng.shuffle(aiSeats),
         busy: false
       };
@@ -117,7 +118,9 @@ export class AIDriver {
     if (plan.busy) return;
 
     if (plan.speakQueue.length) {
-      const seat = plan.speakQueue.shift();
+      const item = plan.speakQueue.shift();
+      const seat = typeof item === "object" ? item.seat : item;
+      const round = typeof item === "object" ? item.round : "发言";
       plan.busy = true;
       (async () => {
         await delay(1200 + this.rng.int(2200));
@@ -125,7 +128,7 @@ export class AIDriver {
         if (this.engine.state.phase === "day" && this.engine.state.players[seat].alive) {
           const ai = this.aiPlayers.get(seat);
           const text = await ai.speak(this._viewOf(seat), this.getChatFor(seat));
-          if (text) this.pushChat(seat, text, null);
+          if (text) this.pushChat(seat, `【${round}】${text}`, null);
         }
         plan.busy = false;
         this.tick();

@@ -1,4 +1,5 @@
 import React from "react";
+import { Icon } from "./Icon.jsx";
 
 /** 投票横幅:显示被提名者、投票进度;轮到自己时给出举手按钮 */
 export function VoteBanner({ view, onVote }) {
@@ -22,8 +23,8 @@ export function VoteBanner({ view, onVote }) {
         <div className="vote-actions">
           <span>轮到你了!</span>
           {!view.you.alive && <em className="hint">(将消耗遗书票)</em>}
-          <button className="btn vote-yes" onClick={() => onVote(true)}>✋ 举手赞成</button>
-          <button className="btn vote-no" onClick={() => onVote(false)}>✖ 不举手</button>
+          <button className="btn vote-yes" onClick={() => onVote(true)}><Icon name="hand" /> 举手赞成</button>
+          <button className="btn vote-no" onClick={() => onVote(false)}><Icon name="voteNo" /> 不举手</button>
         </div>
       ) : (
         <span className="vote-waiting">等待 {currentVoter ? currentVoter.name : ""} 表决……</span>

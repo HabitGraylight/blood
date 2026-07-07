@@ -1,5 +1,7 @@
 import React from "react";
 import { ROLES, TEAM_LABELS } from "../../core/data/roles.js";
+import { Icon } from "./Icon.jsx";
+import { RoleIcon } from "./RoleIcon.jsx";
 
 /**
  * 城镇广场:玩家围坐一圈。
@@ -54,7 +56,7 @@ export function TownSquare({ view, selectable, picked, onSeatClick }) {
               disabled={!isSelectable}
             >
               <span className="seat-token">
-                {role ? role.symbol : s.alive ? (s.isHuman ? "🧑" : "🤖") : "💀"}
+                {role ? <RoleIcon roleId={s.revealedRole} scriptId={view.scriptId} size={50} /> : <Icon name={s.alive ? (s.isHuman ? "player" : "ai") : "dead"} size={28} />}
               </span>
               <span className="seat-name">
                 {s.name}
@@ -65,8 +67,8 @@ export function TownSquare({ view, selectable, picked, onSeatClick }) {
                   {role.name} · {TEAM_LABELS[role.team]}
                 </span>
               )}
-              {!s.alive && s.ghostVote && <span className="ghost-vote" title="遗书票">🪶</span>}
-              {voteMark && <span className="hand" title="举手">✋</span>}
+              {!s.alive && s.ghostVote && <span className="ghost-vote" title="遗书票"><Icon name="ghostVote" size={16} /></span>}
+              {voteMark && <span className="hand" title="举手"><Icon name="hand" size={18} /></span>}
             </button>
           </div>
         );

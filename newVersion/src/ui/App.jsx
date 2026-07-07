@@ -1,10 +1,9 @@
-import React, { useState, useCallback } from "react";
+﻿import React, { useState, useCallback } from "react";
 import { HomeScreen } from "./screens/HomeScreen.jsx";
 import { SingleSetupScreen } from "./screens/SingleSetupScreen.jsx";
 import { MultiLobbyScreen } from "./screens/MultiLobbyScreen.jsx";
 import { RoomScreen } from "./screens/RoomScreen.jsx";
 import { GameScreen } from "./screens/GameScreen.jsx";
-import { SettingsModal } from "./components/SettingsModal.jsx";
 import { LocalSession } from "../session/localSession.js";
 
 /**
@@ -15,7 +14,6 @@ import { LocalSession } from "../session/localSession.js";
 export function App() {
   const [screen, setScreen] = useState("home");
   const [session, setSession] = useState(null);
-  const [showSettings, setShowSettings] = useState(false);
 
   const goHome = useCallback(() => {
     if (session) session.leave();
@@ -23,8 +21,8 @@ export function App() {
     setScreen("home");
   }, [session]);
 
-  const startSingle = useCallback((playerName, playerCount) => {
-    const s = new LocalSession({ playerName, playerCount });
+  const startSingle = useCallback((playerName, playerCount, scriptId) => {
+    const s = new LocalSession({ playerName, playerCount, scriptId });
     setSession(s);
     setScreen("game");
   }, []);
@@ -40,7 +38,6 @@ export function App() {
         <HomeScreen
           onSingle={() => setScreen("single-setup")}
           onMulti={() => setScreen("multi-lobby")}
-          onSettings={() => setShowSettings(true)}
         />
       )}
       {screen === "single-setup" && (
@@ -59,7 +56,7 @@ export function App() {
       {screen === "game" && session && (
         <GameScreen session={session} onLeave={goHome} />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }
+

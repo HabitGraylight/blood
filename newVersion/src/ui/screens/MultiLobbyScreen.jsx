@@ -1,11 +1,14 @@
 import React, { useState } from "react";
 import { FirebaseHostSession, FirebaseGuestSession } from "../../session/firebaseSession.js";
+import { AVAILABLE_SCRIPTS, DEFAULT_SCRIPT_ID } from "../../scripts/registry.js";
 
 export function MultiLobbyScreen({ onEnterRoom, onBack }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [scriptId, setScriptId] = useState(DEFAULT_SCRIPT_ID);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const script = AVAILABLE_SCRIPTS.find((s) => s.id === scriptId) || AVAILABLE_SCRIPTS[0];
 
   const withBusy = async (fn) => {
     setBusy(true);
@@ -21,7 +24,7 @@ export function MultiLobbyScreen({ onEnterRoom, onBack }) {
 
   const create = () =>
     withBusy(async () => {
-      const s = await FirebaseHostSession.create(name.trim() || "房主");
+      const s = await FirebaseHostSession.create(name.trim() || "说书人", scriptId);
       onEnterRoom(s);
     });
 
@@ -44,7 +47,16 @@ export function MultiLobbyScreen({ onEnterRoom, onBack }) {
       <div className="lobby-actions">
         <div className="lobby-block">
           <h3>创建房间</h3>
-          <p className="hint">你将成为房主。开局后你的浏览器负责主持游戏,请保持页面开启。</p>
+          <label className="field compact-field">
+            <span>剧本</span>
+            <select value={scriptId} onChange={(e) => setScriptId(e.target.value)}>
+              {AVAILABLE_SCRIPTS.map((s) => (
+                <option key={s.id} value={s.id}>{s.name} · {s.englishName}</option>
+              ))}
+            </select>
+          </label>
+          <p className="hint">{script.summary}</p>
+          <p className="hint">你将成为独立说书人,不占玩家座位。请保持页面开启。</p>
           <button className="btn primary" disabled={busy} onClick={create}>创建房间</button>
         </div>
         <div className="lobby-block">

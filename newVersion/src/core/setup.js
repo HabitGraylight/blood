@@ -1,14 +1,23 @@
 /**
- * 游戏设置:按人数配置表抽取角色并发牌。
- * 处理男爵的设置修正、酒鬼的伪装身份、占卜师的红鲱鱼。
+ * 游戏设置:按剧本人数配置表抽取角色并发牌。
+ * 处理设置修正、酒鬼伪装身份、占卜师红鲱鱼等脚本内规则。
  */
-import { ROLES, SETUP_TABLE, TEAM, rolesByTeam } from "./data/roles.js";
+import { getScript, TEAM } from "../scripts/registry.js";
+
+function resolveScript(scriptOrId) {
+  return scriptOrId && scriptOrId.roles ? scriptOrId : getScript(scriptOrId);
+}
+
+function scriptRolesByTeam(script, team) {
+  return Object.values(script.roles).filter((r) => r.team === team);
+}
 
 /** 计算实际身份分布(应用男爵等设置修正) */
-export function resolveComposition(playerCount, chosenRoles) {
-  const base = { ...SETUP_TABLE[playerCount] };
+export function resolveComposition(playerCount, chosenRoles = [], scriptOrId) {
+  const script = resolveScript(scriptOrId);
+  const base = { ...script.setupTable[playerCount] };
   for (const roleId of chosenRoles) {
-    const mod = ROLES[roleId] && ROLES[roleId].setupModifier;
+    const mod = script.roles[roleId] && script.roles[roleId].setupModifier;
     if (mod) {
       for (const [team, delta] of Object.entries(mod)) {
         base[team] = Math.max(0, (base[team] || 0) + delta);
@@ -22,25 +31,28 @@ export function resolveComposition(playerCount, chosenRoles) {
  * 抽取本局角色列表。
  * 返回 { roles: string[], composition } — roles 数量等于玩家数。
  */
-export function drawRoles(playerCount, rng) {
-  if (!SETUP_TABLE[playerCount]) {
-    throw new Error(`不支持的玩家数量: ${playerCount} (需要 5-15 人)`);
+export function drawRoles(playerCount, rng, scriptOrId) {
+  const script = resolveScript(scriptOrId);
+  if (!script.setupTable[playerCount]) {
+    throw new Error(`不支持的玩家数量: ${playerCount} (需要 ${script.minPlayers}-${script.maxPlayers} 人)`);
   }
-  const composition = { ...SETUP_TABLE[playerCount] };
+  const composition = { ...script.setupTable[playerCount] };
 
   // 先抽爪牙:若抽到男爵,应用 +2 外来者修正
   const minions = rng
-    .shuffle(rolesByTeam(TEAM.MINION).map((r) => r.id))
+    .shuffle(scriptRolesByTeam(script, TEAM.MINION).map((r) => r.id))
     .slice(0, composition.minion);
-  const withMod = resolveComposition(playerCount, minions);
+  const withMod = resolveComposition(playerCount, minions, script);
 
   const townsfolk = rng
-    .shuffle(rolesByTeam(TEAM.TOWNSFOLK).map((r) => r.id))
+    .shuffle(scriptRolesByTeam(script, TEAM.TOWNSFOLK).map((r) => r.id))
     .slice(0, withMod.townsfolk);
   const outsiders = rng
-    .shuffle(rolesByTeam(TEAM.OUTSIDER).map((r) => r.id))
+    .shuffle(scriptRolesByTeam(script, TEAM.OUTSIDER).map((r) => r.id))
     .slice(0, withMod.outsider);
-  const demons = ["imp"];
+  const demons = rng
+    .shuffle(scriptRolesByTeam(script, TEAM.DEMON).map((r) => r.id))
+    .slice(0, withMod.demon || 1);
 
   return {
     roles: rng.shuffle([...townsfolk, ...outsiders, ...minions, ...demons]),
@@ -53,12 +65,13 @@ export function drawRoles(playerCount, rng) {
  * players: [{ id, name, isHuman }] 按座位顺序。
  * fixedRoles: 测试用,按座位顺序直接指定角色,跳过随机抽取。
  */
-export function assignRoles(players, rng, fixedRoles) {
-  const roles = fixedRoles || drawRoles(players.length, rng).roles;
+export function assignRoles(players, rng, fixedRoles, scriptOrId) {
+  const script = resolveScript(scriptOrId);
+  const roles = fixedRoles || drawRoles(players.length, rng, script).roles;
 
   const seats = players.map((p, seat) => {
     const roleId = roles[seat];
-    const role = ROLES[roleId];
+    const role = script.roles[roleId];
     return {
       seat,
       id: p.id,
@@ -69,16 +82,15 @@ export function assignRoles(players, rng, fixedRoles) {
       alignment: role.team === TEAM.MINION || role.team === TEAM.DEMON ? "evil" : "good",
       alive: true,
       ghostVote: true,
-      // 酒鬼:以为自己是一个不在场上的村民角色
       believedRole: null,
-      // 状态标记
       poisonedBy: null,
       protectedBy: null,
-      master: null, // 管家的主人座位号
-      redHerring: false, // 占卜师的红鲱鱼
-      usedAbility: false, // 杀手/圣女等一次性能力
+      master: null,
+      redHerring: false,
+      usedAbility: false,
+      slayerUsed: false,
       diedTonight: false,
-      evilInfo: null, // 首夜邪恶互认信息
+      evilInfo: null,
       privateLog: []
     };
   });
@@ -87,16 +99,16 @@ export function assignRoles(players, rng, fixedRoles) {
   const drunkSeat = seats.find((s) => s.role === "drunk");
   if (drunkSeat) {
     const inPlay = new Set(seats.map((s) => s.role));
-    const candidates = rolesByTeam(TEAM.TOWNSFOLK)
+    const candidates = scriptRolesByTeam(script, TEAM.TOWNSFOLK)
       .map((r) => r.id)
       .filter((id) => !inPlay.has(id));
     drunkSeat.believedRole = rng.pick(candidates);
   }
 
-  // 占卜师红鲱鱼:一名善良玩家永久被误判为恶魔
+  // 占卜师红鲱鱼:一名善良玩家永久被误判为恶魔,可包括占卜师自己
   const ftSeat = seats.find((s) => effectiveRole(s) === "fortuneteller");
   if (ftSeat) {
-    const goodSeats = seats.filter((s) => s.alignment === "good" && s.seat !== ftSeat.seat);
+    const goodSeats = seats.filter((s) => s.alignment === "good");
     if (goodSeats.length) rng.pick(goodSeats).redHerring = true;
   }
 

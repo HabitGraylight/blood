@@ -22,6 +22,8 @@ class BaseFirebaseSession {
     this.listeners = new Set();
     this.lobby = {}; // playerId -> {name, ai, persona, order}
     this.status = "lobby";
+    this.scriptId = "trouble-brewing";
+    this.storytellerName = name;
     this.view = null;
     this.chat = [];
     this._unsubs = [];
@@ -49,6 +51,8 @@ class BaseFirebaseSession {
     this._watch(roomRef(this.code, "meta"), (snap) => {
       const meta = snap.val() || {};
       this.status = meta.status || "lobby";
+      this.scriptId = meta.scriptId || this.scriptId;
+      this.storytellerName = meta.storytellerName || this.storytellerName;
       this._notify();
     });
   }
@@ -77,15 +81,20 @@ class BaseFirebaseSession {
 /* ================= 房主 ================= */
 
 export class FirebaseHostSession extends BaseFirebaseSession {
-  static async create(playerName) {
+  static async create(playerName, scriptId = "trouble-brewing") {
     const uid = await ensureAuth();
     const code = makeRoomCode();
     const session = new FirebaseHostSession(code, uid, playerName);
     await fb.set(roomRef(code), {
-      meta: { hostUid: uid, status: "lobby", createdAt: Date.now() },
-      lobby: {
-        [uid]: { name: playerName, ai: false, order: Date.now() }
-      }
+      meta: {
+        hostUid: uid,
+        storytellerUid: uid,
+        storytellerName: playerName,
+        scriptId,
+        status: "lobby",
+        createdAt: Date.now()
+      },
+      lobby: {}
     });
     session._init();
     return session;
@@ -121,7 +130,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     };
     const id = `ai-${Date.now()}-${this.aiCounter++}`;
     await fb.set(roomRef(this.code, "lobby", id), {
-      name: preset.name, ai: true, persona: preset.persona, order: Date.now()
+      name: preset.name, ai: true, role: "ai", persona: preset.persona, order: Date.now()
     });
   }
 
@@ -141,8 +150,11 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       id: p.id, name: p.name, isHuman: !p.ai, persona: p.persona || null
     }));
 
-    this.core = new GameCore(players, () => this._publish());
-    this.mySeat = this.core.seatOf(this.uid);
+    this.core = new GameCore(players, () => this._publish(), {
+      scriptId: this.scriptId,
+      storytellerId: this.uid
+    });
+    this.mySeat = -1;
     await fb.update(roomRef(this.code, "meta"), { status: "playing" });
     this.core.start();
     return { ok: true };
@@ -153,8 +165,8 @@ export class FirebaseHostSession extends BaseFirebaseSession {
   _publish() {
     if (!this.core) return;
     // 房主自己的视图直接取,免一次网络往返
-    this.view = this.core.getViewFor(this.uid);
-    this.chat = this.core.getChatForSeat(this.mySeat).slice(-VIEW_CHAT_LIMIT);
+    this.view = this.core.getStorytellerView();
+    this.chat = this.core.getAllChat().slice(-VIEW_CHAT_LIMIT);
     this._notify();
 
     // 其他真人玩家:各自的视图 + 可见聊天
@@ -188,22 +200,25 @@ export class FirebaseHostSession extends BaseFirebaseSession {
   /* ---------- 房主本人动作(直达 core) ---------- */
 
   sendChat(text, toSeat = null) {
-    return this.core.chatFrom(this.uid, text, toSeat);
+    return { ok: false, error: "说书人暂不参与玩家聊天" };
   }
   nightAction(targets) {
-    return this.core.dispatchFor(this.uid, { type: "nightAction", targets });
+    return { ok: false, error: "说书人不能执行玩家夜间行动" };
   }
   nominate(nominee) {
-    return this.core.dispatchFor(this.uid, { type: "nominate", nominee });
+    return { ok: false, error: "说书人不能提名" };
   }
   vote(up) {
-    return this.core.dispatchFor(this.uid, { type: "vote", up });
+    return { ok: false, error: "说书人不能投票" };
   }
   slayerShot(target) {
-    return this.core.dispatchFor(this.uid, { type: "slayerShot", target });
+    return { ok: false, error: "说书人不能使用玩家能力" };
   }
   endDay() {
-    return this.core.dispatchFor(this.uid, { type: "endDay" }, { isHost: true });
+    return this.core.dispatchStoryteller({ type: "endDay" });
+  }
+  storytellerAction(action) {
+    return this.core.dispatchStoryteller(action);
   }
 
   leave() {
@@ -224,7 +239,7 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     if ((metaSnap.val().status || "lobby") !== "lobby") throw new Error("游戏已开始,无法加入");
 
     await fb.set(roomRef(upper, "lobby", uid), {
-      name: playerName, ai: false, order: Date.now()
+      name: playerName, ai: false, role: "player", order: Date.now()
     });
     const session = new FirebaseGuestSession(upper, uid, playerName);
     session._init();

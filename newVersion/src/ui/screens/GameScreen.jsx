@@ -1,10 +1,12 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+﻿import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { TownSquare } from "../components/TownSquare.jsx";
 import { RoleCard } from "../components/RoleCard.jsx";
 import { ChatPanel } from "../components/ChatPanel.jsx";
 import { VoteBanner } from "../components/VoteBanner.jsx";
 import { NightPanel } from "../components/NightPanel.jsx";
 import { EndOverlay } from "../components/EndOverlay.jsx";
+import { StorytellerConsole } from "../components/StorytellerConsole.jsx";
+import { Icon } from "../components/Icon.jsx";
 
 /**
  * 游戏主界面。所有数据来自 session.getView()(玩家视角投影),
@@ -101,6 +103,10 @@ export function GameScreen({ session, onLeave }) {
     );
   }
 
+  if (view.isStoryteller) {
+    return <StorytellerConsole view={view} chat={chat} session={session} onLeave={onLeave} />;
+  }
+
   const isNight = view.phase === "night";
   const phaseText =
     view.phase === "night"
@@ -112,9 +118,9 @@ export function GameScreen({ session, onLeave }) {
   return (
     <div className={`game ${isNight ? "night-mode" : ""}`}>
       <header className="game-header">
-        <button className="link-btn" onClick={onLeave}>← 离开</button>
+        <button className="link-btn" onClick={onLeave}><Icon name="back" /> 离开</button>
         <div className="phase-banner">
-          <span className="phase-icon">{isNight ? "🌙" : view.phase === "end" ? "🏁" : "☀️"}</span>
+          <span className="phase-icon"><Icon name={isNight ? "night" : view.phase === "end" ? "end" : "day"} size={22} /></span>
           <span>{phaseText}</span>
         </div>
         {session.mode !== "single" && <span className="room-code small">房间 {session.code}</span>}
@@ -185,12 +191,12 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
     <div className="action-bar">
       {view.canNominate && (
         <button className="btn" onClick={() => setSelect({ mode: "nominate", picked: [], max: 1 })}>
-          🗳 提名
+          <Icon name="nominate" /> 提名
         </button>
       )}
       {view.canSlay && view.you.alive && (
         <button className="btn" onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}>
-          🏹 杀手开枪
+          <Icon name="slayer" /> 杀手开枪
         </button>
       )}
       {session.isHost && view.canEndDay && (
@@ -201,7 +207,7 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
             if (res && res.error) showToast(res.error);
           }}
         >
-          🌆 宣布黄昏
+          <Icon name="dusk" /> 宣布黄昏
           {view.onBlock && view.onBlock.seat != null
             ? `(处决 ${view.seats[view.onBlock.seat].name})`
             : "(无人被处决)"}
@@ -210,3 +216,5 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
     </div>
   );
 }
+
+

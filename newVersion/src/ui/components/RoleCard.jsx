@@ -1,5 +1,7 @@
 import React from "react";
 import { ROLES, roleName } from "../../core/data/roles.js";
+import { RoleIcon } from "./RoleIcon.jsx";
+import { Icon } from "./Icon.jsx";
 
 /** 身份卡 + 私密信息记录 */
 export function RoleCard({ view }) {
@@ -9,7 +11,7 @@ export function RoleCard({ view }) {
   return (
     <div className="role-card-wrap">
       <div className={`role-card team-${you.team}`}>
-        <div className="role-symbol">{role.symbol}</div>
+        <div className="role-symbol"><RoleIcon roleId={you.role} scriptId={view.scriptId} size={64} /></div>
         <div className="role-meta">
           <h3>{you.roleName}</h3>
           <span className="role-team">{you.teamLabel} · {you.alignmentLabel}阵营</span>
@@ -17,7 +19,7 @@ export function RoleCard({ view }) {
         <p className="role-ability">{you.ability}</p>
         {!you.alive && (
           <p className="role-dead">
-            ☠ 你已死亡。{you.ghostVote ? "你还有一次遗书票,可继续发言。" : "遗书票已用完,但仍可发言。"}
+            <Icon name="dead" /> 你已死亡。{you.ghostVote ? "你还有一次遗书票,可继续发言。" : "遗书票已用完,但仍可发言。"}
           </p>
         )}
         {you.evilInfo && (

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Icon } from "../components/Icon.jsx";
 
 /** 联机房间大厅:等待玩家、房主补 AI、开始游戏 */
 export function RoomScreen({ session, onGameStart, onLeave }) {
@@ -7,7 +8,6 @@ export function RoomScreen({ session, onGameStart, onLeave }) {
 
   useEffect(() => session.subscribe(() => force((x) => x + 1)), [session]);
 
-  // 游戏开始:访客通过 status 感知;房主在点击开始时切换
   useEffect(() => {
     if (session.status === "playing") onGameStart();
   }, [session.status, onGameStart]);
@@ -23,12 +23,16 @@ export function RoomScreen({ session, onGameStart, onLeave }) {
   return (
     <div className="setup-screen panel">
       <h2>房间 <span className="room-code">{session.code}</span></h2>
-      <p className="hint">把房间码告诉朋友,等人齐后开始。需要 5-15 名玩家(可用 AI 补足)。</p>
+      <p className="hint">剧本: {session.scriptId}. 创建者是独立说书人,不占玩家座位。需要 5-15 名玩家(可用 AI 补足)。</p>
 
       <ul className="lobby-list">
+        <li className="lobby-item storyteller-item">
+          <span className="lobby-avatar"><Icon name="storyteller" /></span>
+          <span className="lobby-name">{session.storytellerName || "说书人"} <em className="persona"> · 说书人</em></span>
+        </li>
         {players.map((p) => (
           <li key={p.id} className="lobby-item">
-            <span className={`lobby-avatar ${p.ai ? "ai" : ""}`}>{p.ai ? "🤖" : "🧑"}</span>
+            <span className={`lobby-avatar ${p.ai ? "ai" : ""}`}><Icon name={p.ai ? "ai" : "player"} /></span>
             <span className="lobby-name">
               {p.name}
               {p.id === session.uid && " (你)"}
@@ -41,7 +45,7 @@ export function RoomScreen({ session, onGameStart, onLeave }) {
         ))}
       </ul>
 
-      <p className="hint">当前 {players.length} 人</p>
+      <p className="hint">当前玩家 {players.length} 人,说书人 1 人</p>
       {error && <p className="error">{error}</p>}
 
       <div className="btn-row">
@@ -54,7 +58,7 @@ export function RoomScreen({ session, onGameStart, onLeave }) {
             </button>
           </>
         )}
-        {!session.isHost && <span className="hint">等待房主开始……</span>}
+        {!session.isHost && <span className="hint">等待说书人开始……</span>}
       </div>
     </div>
   );

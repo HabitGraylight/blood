@@ -1,3 +1,5 @@
+﻿@import url("https://fonts.googleapis.com/css2?family=ZCOOL+XiaoWei&display=swap");
+
 /* ============ 血染钟楼 · 全局样式 ============ */
 :root {
   --bg: #120e1c;
@@ -17,7 +19,9 @@
   --minion: #c06a8a;
   --demon: #c25843;
   --radius: 12px;
-  font-size: 15px;
+  --font-title: "ZCOOL XiaoWei", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-ui: var(--font-title);
+  font-size: 17px;
 }
 
 * { box-sizing: border-box; }
@@ -33,13 +37,13 @@ body {
     radial-gradient(ellipse at 80% 100%, rgba(140, 40, 60, 0.18), transparent 50%),
     var(--bg);
   color: var(--ink);
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--font-ui);
   overflow-x: hidden;
 }
 
-.app { min-height: 100%; display: flex; flex-direction: column; }
+.app { min-height: 100%; height: 100%; display: flex; flex-direction: column; }
 
-h1, h2, h3 { font-family: "ZCOOL XiaoWei", "Noto Serif SC", serif; font-weight: 600; }
+h1, h2, h3 { font-family: var(--font-title); font-weight: 600; }
 
 button { font-family: inherit; cursor: pointer; }
 input, select {
@@ -193,7 +197,7 @@ input:focus, select:focus { border-color: var(--gold); }
 .persona { color: var(--ink-dim); font-size: 0.82rem; font-style: normal; }
 
 /* ---------- 游戏主界面 ---------- */
-.game { flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+.game { flex: 1; display: flex; flex-direction: column; height: 100vh; min-height: 0; overflow: hidden; }
 
 .game-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -203,17 +207,18 @@ input:focus, select:focus { border-color: var(--gold); }
 }
 .phase-banner {
   display: flex; align-items: center; gap: 10px;
-  font-size: 1.15rem; font-family: "ZCOOL XiaoWei", serif;
+  font-size: 1.15rem; font-family: var(--font-title);
   color: var(--gold-bright); letter-spacing: 0.15em;
 }
 .phase-icon { font-size: 1.3rem; }
 
 .game-body {
-  flex: 1; display: grid; gap: 14px; padding: 14px;
+  flex: 1 1 auto; display: grid; gap: 14px; padding: 14px;
   grid-template-columns: 270px 1fr 320px;
-  min-height: 0;
+  min-height: 0; overflow: hidden;
 }
-.left-panel, .right-panel { min-height: 0; overflow-y: auto; }
+.left-panel { min-height: 0; overflow-y: auto; }
+.right-panel { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .center-panel { display: flex; flex-direction: column; min-height: 0; }
 
 .game-loading {
@@ -340,7 +345,7 @@ input:focus, select:focus { border-color: var(--gold); }
 .role-symbol {
   width: 64px; height: 64px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 2rem; font-family: "ZCOOL XiaoWei", serif;
+  font-size: 2rem; font-family: var(--font-title);
   background: radial-gradient(circle at 32% 28%, #46395f, #241b38 75%);
   border: 2px solid var(--gold);
   align-self: center;
@@ -373,10 +378,10 @@ input:focus, select:focus { border-color: var(--gold); }
 
 /* ---------- 聊天面板 ---------- */
 .chat-panel {
-  display: flex; flex-direction: column; height: 100%;
+  display: flex; flex-direction: column; flex: 1 1 auto;
+  height: auto; min-height: 0; max-height: 100%;
   background: var(--panel); border: 1px solid var(--panel-border);
   border-radius: var(--radius); overflow: hidden;
-  min-height: 400px;
 }
 .chat-tabs { display: flex; border-bottom: 1px solid var(--panel-border); }
 .chat-tabs button {
@@ -386,13 +391,18 @@ input:focus, select:focus { border-color: var(--gold); }
 }
 .chat-tabs button.active { color: var(--gold-bright); border-bottom-color: var(--gold); }
 
-.chat-scroll { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.chat-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  scrollbar-gutter: stable;
+}
 
 .msg { display: flex; flex-direction: column; max-width: 92%; }
 .msg-from { font-size: 0.75rem; color: var(--gold); margin-bottom: 2px; }
 .msg-text {
   background: rgba(0,0,0,0.3); padding: 7px 12px; border-radius: 10px;
   font-size: 0.92rem; line-height: 1.5; width: fit-content;
+  max-width: 100%; overflow-wrap: anywhere;
 }
 .msg.mine { align-self: flex-end; align-items: flex-end; }
 .msg.mine .msg-text { background: rgba(110, 31, 46, 0.4); }
@@ -419,7 +429,7 @@ input:focus, select:focus { border-color: var(--gold); }
   animation: fadeIn 0.8s ease;
 }
 .night-stars { color: var(--gold); letter-spacing: 0.6em; }
-.night-msg p { font-size: 1.25rem; margin: 8px 0 4px; font-family: "ZCOOL XiaoWei", serif; }
+.night-msg p { font-size: 1.25rem; margin: 8px 0 4px; font-family: var(--font-title); }
 .night-msg small { color: var(--ink-dim); }
 @keyframes fadeIn { from { opacity: 0; } }
 
@@ -464,7 +474,7 @@ input:focus, select:focus { border-color: var(--gold); }
   width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   background: #241b38; border: 1px solid var(--panel-border);
-  font-family: "ZCOOL XiaoWei", serif;
+  font-family: var(--font-title);
 }
 .reveal-name { min-width: 70px; }
 .reveal-role { color: var(--ink-dim); font-size: 0.88rem; flex: 1; }
@@ -492,6 +502,156 @@ input:focus, select:focus { border-color: var(--gold); }
   .game-body { grid-template-columns: 1fr; }
   .left-panel { order: 2; }
   .center-panel { order: 1; }
-  .right-panel { order: 3; min-height: 400px; }
+  .right-panel { order: 3; height: min(460px, 70vh); min-height: 320px; }
   .town-square { max-width: 92vw; }
 }
+
+/* ---------- SVG 图标系统 ---------- */
+.icon { display: inline-block; vertical-align: -0.18em; flex-shrink: 0; }
+.btn .icon, .link-btn .icon, .chat-tabs .icon, .phase-banner .icon, .panel-title .icon { margin-right: 6px; }
+.mode-icon { color: var(--gold-bright); display: inline-flex; }
+.role-symbol { overflow: hidden; }
+.role-symbol .role-svg { width: 100%; height: 100%; }
+.role-svg { color: var(--gold); filter: drop-shadow(0 4px 12px rgba(0,0,0,0.45)); }
+.role-svg-townsfolk { color: var(--townsfolk); }
+.role-svg-outsider { color: var(--outsider); }
+.role-svg-minion { color: var(--minion); }
+.role-svg-demon { color: var(--demon); }
+.seat-token .role-svg { width: 50px; height: 50px; }
+.chat-tabs button { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.link-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+textarea {
+  font-family: inherit;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--panel-border);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 1rem;
+  outline: none;
+  resize: vertical;
+}
+textarea:focus { border-color: var(--gold); }
+.compact-field { margin: 4px 0 8px; }
+
+/* ---------- 说书人控制台 ---------- */
+.storyteller-shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.storyteller-header { position: sticky; top: 0; z-index: 20; }
+.storyteller-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 330px minmax(360px, 1fr) 360px;
+  gap: 14px;
+  padding: 14px;
+  min-height: 0;
+}
+.story-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.panel-title {
+  display: flex; align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--panel-border);
+  color: var(--gold-bright);
+  font-family: var(--font-title);
+  letter-spacing: 0.08em;
+}
+.grimoire-list, .story-log, .private-review { overflow-y: auto; }
+.grimoire-list { padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+.grimoire-row {
+  width: 100%; display: grid; grid-template-columns: 42px 1fr auto; gap: 10px; align-items: center;
+  background: rgba(0,0,0,0.22); border: 1px solid transparent; color: var(--ink);
+  border-radius: 8px; padding: 8px; text-align: left;
+}
+.grimoire-row:hover, .grimoire-row.active { border-color: var(--gold); background: rgba(201,161,90,0.12); }
+.grimoire-row.dead { opacity: 0.7; }
+.grimoire-main { display: flex; flex-direction: column; min-width: 0; }
+.grimoire-main small { color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.status-stack b {
+  color: var(--gold-bright); font-size: 0.72rem; font-weight: 500;
+  border: 1px solid rgba(201,161,90,0.35); border-radius: 999px; padding: 1px 7px;
+}
+.timeline-panel { min-width: 0; }
+.phase-tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border-bottom: 1px solid var(--panel-border); }
+.story-callout { margin: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(160,49,68,0.18); border: 1px solid rgba(224,105,122,0.35); color: var(--gold-bright); }
+.story-log { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ruling-panel { padding-bottom: 12px; }
+.ruling-panel > .field, .ruling-panel > .btn, .private-review, .selected-player, .ruling-actions { margin-left: 14px; margin-right: 14px; }
+.selected-player { display: flex; gap: 12px; align-items: center; padding: 14px 0 8px; }
+.selected-player h3 { margin: 0 0 4px; color: var(--gold-bright); }
+.selected-player p { margin: 2px 0; color: var(--ink-dim); }
+.ruling-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.private-review { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(0,0,0,0.2); }
+.private-review h4 { margin: 0 0 8px; color: var(--gold); }
+.private-review p { margin: 6px 0; color: var(--ink-dim); line-height: 1.45; }
+.storyteller-item { border: 1px solid rgba(201,161,90,0.3); background: rgba(201,161,90,0.08); }
+
+@media (max-width: 1100px) {
+  .storyteller-grid { grid-template-columns: 1fr; }
+  .story-panel { min-height: 320px; }
+}
+
+/* ---------- 暗色滚动条 ---------- */
+.chat-scroll,
+.left-panel,
+.end-card,
+.modal,
+.grimoire-list,
+.story-log,
+.private-review {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201, 161, 90, 0.62) rgba(10, 8, 18, 0.48);
+}
+
+.chat-scroll::-webkit-scrollbar,
+.left-panel::-webkit-scrollbar,
+.end-card::-webkit-scrollbar,
+.modal::-webkit-scrollbar,
+.grimoire-list::-webkit-scrollbar,
+.story-log::-webkit-scrollbar,
+.private-review::-webkit-scrollbar {
+  width: 9px;
+}
+
+.chat-scroll::-webkit-scrollbar-track,
+.left-panel::-webkit-scrollbar-track,
+.end-card::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track,
+.grimoire-list::-webkit-scrollbar-track,
+.story-log::-webkit-scrollbar-track,
+.private-review::-webkit-scrollbar-track {
+  background: rgba(10, 8, 18, 0.48);
+  border-left: 1px solid rgba(201, 161, 90, 0.12);
+}
+
+.chat-scroll::-webkit-scrollbar-thumb,
+.left-panel::-webkit-scrollbar-thumb,
+.end-card::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb,
+.grimoire-list::-webkit-scrollbar-thumb,
+.story-log::-webkit-scrollbar-thumb,
+.private-review::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(232, 198, 132, 0.78), rgba(110, 31, 46, 0.78));
+  border: 2px solid rgba(10, 8, 18, 0.58);
+  border-radius: 999px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover,
+.left-panel::-webkit-scrollbar-thumb:hover,
+.end-card::-webkit-scrollbar-thumb:hover,
+.modal::-webkit-scrollbar-thumb:hover,
+.grimoire-list::-webkit-scrollbar-thumb:hover,
+.story-log::-webkit-scrollbar-thumb:hover,
+.private-review::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--gold-bright), var(--blood));
+}
+
+
