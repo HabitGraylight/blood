@@ -22,6 +22,7 @@ export function GameScreen({ session, onLeave }) {
 
   const view = session.getView();
   const chat = session.getChat();
+  const seats = Array.isArray(view?.seats) ? view.seats : [];
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -209,12 +210,13 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
         >
           <Icon name="dusk" /> 宣布黄昏
           {view.onBlock && view.onBlock.seat != null
-            ? `(处决 ${view.seats[view.onBlock.seat].name})`
+            ? `(处决 ${seats[view.onBlock.seat]?.name || "未知玩家"})`
             : "(无人被处决)"}
         </button>
       )}
     </div>
   );
 }
+
 
 

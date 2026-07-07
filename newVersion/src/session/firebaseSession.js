@@ -6,6 +6,10 @@ const VIEW_CHAT_LIMIT = 200;
 const RESUME_KEY = "botc.firebase.resume.v1";
 const HOST_CORE_PREFIX = "botc.firebase.hostCore.";
 
+function makeGameId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function saveResume(data) {
   try {
     localStorage.setItem(RESUME_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
@@ -32,10 +36,14 @@ function clearResume(code = null) {
   }
 }
 
-function saveHostCore(code, core) {
+function saveHostCore(code, gameId, core) {
   if (!core) return;
   try {
-    localStorage.setItem(`${HOST_CORE_PREFIX}${code}`, JSON.stringify({ core: core.serialize(), savedAt: Date.now() }));
+    localStorage.setItem(`${HOST_CORE_PREFIX}${code}`, JSON.stringify({
+      gameId,
+      core: core.serialize(),
+      savedAt: Date.now()
+    }));
   } catch (error) {
     console.warn("保存房主权威状态失败:", error);
   }
@@ -50,6 +58,18 @@ function readHostCore(code) {
   }
 }
 
+function stampView(view, code, gameId) {
+  return view ? { ...view, roomCode: code, gameId } : null;
+}
+
+function isFreshPayload(data, code, gameId) {
+  if (!data) return false;
+  if (data.roomCode && data.roomCode !== code) return false;
+  if (gameId && data.gameId !== gameId) return false;
+  if (gameId && data.view?.gameId && data.view.gameId !== gameId) return false;
+  return true;
+}
+
 class BaseFirebaseSession {
   constructor(code, uid, name) {
     this.code = code;
@@ -60,6 +80,7 @@ class BaseFirebaseSession {
     this.status = "lobby";
     this.scriptId = "trouble-brewing";
     this.storytellerName = name;
+    this.gameId = null;
     this.view = null;
     this.chat = [];
     this._unsubs = [];
@@ -82,7 +103,8 @@ class BaseFirebaseSession {
       mode: this.mode,
       isHost: this.isHost,
       status: this.status,
-      scriptId: this.scriptId
+      scriptId: this.scriptId,
+      gameId: this.gameId
     });
   }
 
@@ -98,9 +120,16 @@ class BaseFirebaseSession {
     });
     this._watch(roomRef(this.code, "meta"), (snap) => {
       const meta = snap.val() || {};
+      const nextGameId = meta.gameId || null;
+      const gameChanged = this.gameId && nextGameId && this.gameId !== nextGameId;
       this.status = meta.status || "lobby";
       this.scriptId = meta.scriptId || this.scriptId;
       this.storytellerName = meta.storytellerName || this.storytellerName;
+      this.gameId = nextGameId;
+      if (gameChanged && !this.isHost) {
+        this.view = null;
+        this.chat = [];
+      }
       this._persistResume();
       this._notify();
     });
@@ -130,6 +159,7 @@ class BaseFirebaseSession {
 
 export class FirebaseHostSession extends BaseFirebaseSession {
   static async create(playerName, scriptId = "trouble-brewing") {
+    clearResume();
     const uid = await ensureAuth();
     const code = makeRoomCode();
     const session = new FirebaseHostSession(code, uid, playerName);
@@ -140,9 +170,11 @@ export class FirebaseHostSession extends BaseFirebaseSession {
         storytellerName: playerName,
         scriptId,
         status: "lobby",
+        gameId: null,
         createdAt: Date.now()
       },
-      lobby: {}
+      lobby: {},
+      views: {}
     });
     session.scriptId = scriptId;
     session._persistResume();
@@ -154,6 +186,10 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     const saved = readResume();
     if (!saved?.code) return null;
     const uid = await ensureAuth();
+    if (saved.uid && saved.uid !== uid) {
+      clearResume(saved.code);
+      return null;
+    }
     const metaSnap = await fb.get(roomRef(saved.code, "meta"));
     if (!metaSnap.exists()) {
       clearResume(saved.code);
@@ -166,14 +202,16 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     session.status = meta.status || "lobby";
     session.scriptId = meta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = meta.storytellerName || session.name;
+    session.gameId = meta.gameId || saved.gameId || null;
 
     const hostSnapshot = readHostCore(saved.code);
-    if (session.status === "playing" && hostSnapshot?.core?.engineState) {
+    const snapshotMatches = !session.gameId || hostSnapshot?.gameId === session.gameId;
+    if (session.status === "playing" && snapshotMatches && hostSnapshot?.core?.engineState) {
       session.core = GameCore.hydrate(hostSnapshot.core, () => session._publish(), {
         storytellerId: uid
       });
       session.mySeat = -1;
-      session.view = session.core.getStorytellerView();
+      session.view = stampView(session.core.getStorytellerView(), session.code, session.gameId);
       session.chat = session.core.getAllChat().slice(-VIEW_CHAT_LIMIT);
     }
 
@@ -228,6 +266,9 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     if (entries.length < 5 || entries.length > 15) {
       return { ok: false, error: "需要 5-15 名玩家" };
     }
+    this.gameId = makeGameId();
+    await fb.remove(roomRef(this.code, "views"));
+
     const rng = createRng(randomSeed());
     const players = rng.shuffle(entries).map((p) => ({
       id: p.id,
@@ -241,7 +282,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       storytellerId: this.uid
     });
     this.mySeat = -1;
-    await fb.update(roomRef(this.code, "meta"), { status: "playing" });
+    await fb.update(roomRef(this.code, "meta"), { status: "playing", gameId: this.gameId, startedAt: Date.now() });
     this._persistResume();
     this.core.start();
     return { ok: true };
@@ -249,8 +290,8 @@ export class FirebaseHostSession extends BaseFirebaseSession {
 
   _publish() {
     if (!this.core) return;
-    saveHostCore(this.code, this.core);
-    this.view = this.core.getStorytellerView();
+    saveHostCore(this.code, this.gameId, this.core);
+    this.view = stampView(this.core.getStorytellerView(), this.code, this.gameId);
     this.chat = this.core.getAllChat().slice(-VIEW_CHAT_LIMIT);
     this._persistResume();
     this._notify();
@@ -258,8 +299,11 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     const updates = {};
     for (const p of this.core.state.players) {
       if (!p.isHuman || p.id === this.uid) continue;
+      const view = stampView(this.core.getViewFor(p.id), this.code, this.gameId);
       updates[`views/${p.id}`] = {
-        view: this.core.getViewFor(p.id),
+        roomCode: this.code,
+        gameId: this.gameId,
+        view,
         chat: this.core.getChatForSeat(p.seat).slice(-VIEW_CHAT_LIMIT),
         rev: Date.now()
       };
@@ -271,6 +315,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
 
   _handleRemoteAction(a) {
     if (!this.core || !a || !a.uid) return;
+    if (this.gameId && a.gameId && a.gameId !== this.gameId) return;
     if (a.kind === "chat") {
       this.core.chatFrom(a.uid, a.text, a.toSeat == null ? null : a.toSeat);
     } else if (a.kind === "action" && a.action) {
@@ -310,12 +355,14 @@ export class FirebaseHostSession extends BaseFirebaseSession {
 
 export class FirebaseGuestSession extends BaseFirebaseSession {
   static async join(code, playerName) {
+    clearResume();
     const uid = await ensureAuth();
     const upper = code.toUpperCase().trim();
     const metaSnap = await fb.get(roomRef(upper, "meta"));
     if (!metaSnap.exists()) throw new Error("房间不存在");
     if ((metaSnap.val().status || "lobby") !== "lobby") throw new Error("游戏已开始,无法加入");
 
+    await fb.remove(roomRef(upper, "views", uid));
     await fb.set(roomRef(upper, "lobby", uid), {
       name: playerName,
       ai: false,
@@ -323,6 +370,10 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       order: Date.now()
     });
     const session = new FirebaseGuestSession(upper, uid, playerName);
+    const meta = metaSnap.val() || {};
+    session.scriptId = meta.scriptId || session.scriptId;
+    session.storytellerName = meta.storytellerName || session.storytellerName;
+    session.gameId = meta.gameId || null;
     session._persistResume();
     session._init();
     return session;
@@ -331,6 +382,10 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
   static async resumeSaved(saved = readResume(), uid = null, meta = null) {
     if (!saved?.code) return null;
     const finalUid = uid || await ensureAuth();
+    if (saved.uid && saved.uid !== finalUid) {
+      clearResume(saved.code);
+      return null;
+    }
     let finalMeta = meta;
     if (!finalMeta) {
       const metaSnap = await fb.get(roomRef(saved.code, "meta"));
@@ -344,6 +399,7 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     session.status = finalMeta.status || "lobby";
     session.scriptId = finalMeta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = finalMeta.storytellerName || "说书人";
+    session.gameId = finalMeta.gameId || saved.gameId || null;
     session._persistResume();
     session._init();
     return session;
@@ -359,16 +415,21 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     this._watchLobbyAndMeta();
     this._watch(roomRef(this.code, "views", this.uid), (snap) => {
       const data = snap.val();
-      if (data) {
-        this.view = data.view || null;
-        this.chat = data.chat || [];
+      if (!data) return;
+      if (!isFreshPayload(data, this.code, this.gameId)) {
+        this.view = null;
+        this.chat = [];
         this._notify();
+        return;
       }
+      this.view = stampView(data.view || null, this.code, this.gameId || data.gameId || null);
+      this.chat = Array.isArray(data.chat) ? data.chat : [];
+      this._notify();
     });
   }
 
   _pushAction(payload) {
-    fb.push(roomRef(this.code, "actions"), { uid: this.uid, ts: Date.now(), ...payload });
+    fb.push(roomRef(this.code, "actions"), { uid: this.uid, ts: Date.now(), gameId: this.gameId, ...payload });
     return { ok: true, pending: true };
   }
 
@@ -396,3 +457,4 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     super.leave();
   }
 }
+

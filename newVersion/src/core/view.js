@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 玩家视角与说书人视角投影。
  * 玩家视角只暴露其应知信息;说书人视角用于完整魔典和裁定控制台。
  */
@@ -21,6 +21,13 @@ export function playerView(state, seat, scriptArg) {
   const ended = state.phase === "end";
   const myRole = effectiveRole(me);
   const roleDef = script.roles[myRole];
+  const evilInfo = me.evilInfo
+    ? {
+        demonSeat: me.evilInfo.demonSeat,
+        minionSeats: Array.isArray(me.evilInfo.minionSeats) ? me.evilInfo.minionSeats : [],
+        bluffs: Array.isArray(me.evilInfo.bluffs) ? me.evilInfo.bluffs : []
+      }
+    : null;
 
   return {
     type: "player",
@@ -49,8 +56,8 @@ export function playerView(state, seat, scriptArg) {
       usedAbility: me.usedAbility,
       slayerUsed: !!me.slayerUsed,
       master: me.master,
-      privateLog: me.privateLog,
-      evilInfo: me.evilInfo || null
+      privateLog: Array.isArray(me.privateLog) ? me.privateLog : [],
+      evilInfo
     },
 
     seats: state.players.map((p) => ({
@@ -148,8 +155,14 @@ export function storytellerView(state, scriptArg) {
         usedAbility: p.usedAbility,
         slayerUsed: !!p.slayerUsed,
         diedTonight: p.diedTonight,
-        evilInfo: p.evilInfo,
-        privateLog: p.privateLog
+        evilInfo: p.evilInfo
+          ? {
+              demonSeat: p.evilInfo.demonSeat,
+              minionSeats: Array.isArray(p.evilInfo.minionSeats) ? p.evilInfo.minionSeats : [],
+              bluffs: Array.isArray(p.evilInfo.bluffs) ? p.evilInfo.bluffs : []
+            }
+          : null,
+        privateLog: Array.isArray(p.privateLog) ? p.privateLog : []
       };
     }),
     canEndDay: state.phase === "day" && ["discussion", "whispers", "nominations"].includes(state.dayStage),
@@ -176,3 +189,4 @@ export function spectatorView(state, scriptArg) {
     log: state.log
   };
 }
+

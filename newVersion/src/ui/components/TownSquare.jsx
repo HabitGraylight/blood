@@ -1,44 +1,48 @@
-import React from "react";
+﻿import React from "react";
 import { ROLES, TEAM_LABELS } from "../../core/data/roles.js";
 import { Icon } from "./Icon.jsx";
 import { RoleIcon } from "./RoleIcon.jsx";
 
-/**
- * 城镇广场:玩家围坐一圈。
- * 座位按圆形布局;死亡玩家盖裹尸布;有遗书票的死者显示投票标记。
- */
 export function TownSquare({ view, selectable, picked, onSeatClick }) {
-  const n = view.seats.length;
-  const cv = view.currentVote;
+  const seats = Array.isArray(view.seats) ? view.seats.filter(Boolean) : [];
+  const n = Math.max(1, seats.length);
+  const cv = view.currentVote || null;
+  const votes = cv?.votes && typeof cv.votes === "object" ? cv.votes : {};
+  const order = Array.isArray(cv?.order) ? cv.order : [];
+  const selected = selectable instanceof Set ? selectable : new Set();
+  const pickedSeats = Array.isArray(picked) ? picked : [];
+  const onBlockSeat = view.onBlock?.seat;
+  const onBlockPlayer = onBlockSeat != null ? seats.find((s) => s.seat === onBlockSeat) : null;
 
   return (
     <div className="town-square">
       <div className="square-center">
-        {view.onBlock && view.onBlock.seat != null ? (
+        {onBlockPlayer ? (
           <div className="block-notice">
-            ⚖️ {view.seats[view.onBlock.seat].name}
+            {onBlockPlayer.name}
             <small>{view.onBlock.votes} 票 · 待处决</small>
           </div>
         ) : (
-          <div className="square-clock">🕰</div>
+          <div className="square-clock"><Icon name="room" size={42} /></div>
         )}
       </div>
 
-      {view.seats.map((s) => {
-        const angle = ((2 * Math.PI) / n) * s.seat - Math.PI / 2;
+      {seats.map((s, idx) => {
+        const logicalSeat = s.seat ?? idx;
+        const angle = ((2 * Math.PI) / n) * idx - Math.PI / 2;
         const x = 50 + 42 * Math.cos(angle);
         const y = 50 + 42 * Math.sin(angle);
-        const isMe = s.seat === view.seat;
-        const isSelectable = selectable.has(s.seat);
-        const isPicked = picked.includes(s.seat);
-        const voteMark = cv && cv.votes[s.seat] === true;
-        const isVoting = cv && cv.order[cv.index] === s.seat;
-        const isNominee = cv && cv.nominee === s.seat;
+        const isMe = logicalSeat === view.seat;
+        const isSelectable = selected.has(logicalSeat);
+        const isPicked = pickedSeats.includes(logicalSeat);
+        const voteMark = votes[logicalSeat] === true;
+        const isVoting = cv && order[cv.index || 0] === logicalSeat;
+        const isNominee = cv && cv.nominee === logicalSeat;
         const role = s.revealedRole ? ROLES[s.revealedRole] : null;
 
         return (
           <div
-            key={s.seat}
+            key={logicalSeat}
             className="seat-slot"
             style={{ left: `${x}%`, top: `${y}%` }}
           >
@@ -52,14 +56,14 @@ export function TownSquare({ view, selectable, picked, onSeatClick }) {
                 isVoting ? "voting-now" : "",
                 isNominee ? "nominee" : ""
               ].join(" ")}
-              onClick={() => onSeatClick(s.seat)}
+              onClick={() => onSeatClick(logicalSeat)}
               disabled={!isSelectable}
             >
               <span className="seat-token">
                 {role ? <RoleIcon roleId={s.revealedRole} scriptId={view.scriptId} size={50} /> : <Icon name={s.alive ? (s.isHuman ? "player" : "ai") : "dead"} size={28} />}
               </span>
               <span className="seat-name">
-                {s.name}
+                {s.name || `玩家${idx + 1}`}
                 {isMe && <em>(你)</em>}
               </span>
               {role && (
