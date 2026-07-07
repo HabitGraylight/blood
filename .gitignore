@@ -7,7 +7,6 @@ dist/
 !.env.example
 
 config/llm.local.json
-data/
 
 *.log
 .DS_Store
