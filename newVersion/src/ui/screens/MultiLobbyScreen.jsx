@@ -1,14 +1,17 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { FirebaseHostSession, FirebaseGuestSession } from "../../session/firebaseSession.js";
 import { AVAILABLE_SCRIPTS, DEFAULT_SCRIPT_ID } from "../../scripts/registry.js";
 
-export function MultiLobbyScreen({ onEnterRoom, onBack }) {
-  const [name, setName] = useState("");
+export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
+  const defaultName = user?.displayName || (user?.email ? user.email.split("@")[0] : "");
+  const [name, setName] = useState(defaultName);
   const [code, setCode] = useState("");
   const [scriptId, setScriptId] = useState(DEFAULT_SCRIPT_ID);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const script = AVAILABLE_SCRIPTS.find((s) => s.id === scriptId) || AVAILABLE_SCRIPTS[0];
+
+  const playerName = () => name.trim() || defaultName || "玩家";
 
   const withBusy = async (fn) => {
     setBusy(true);
@@ -24,23 +27,24 @@ export function MultiLobbyScreen({ onEnterRoom, onBack }) {
 
   const create = () =>
     withBusy(async () => {
-      const s = await FirebaseHostSession.create(name.trim() || "说书人", scriptId);
+      const s = await FirebaseHostSession.create(playerName(), scriptId);
       onEnterRoom(s);
     });
 
   const join = () =>
     withBusy(async () => {
       if (!code.trim()) throw new Error("请输入房间码");
-      const s = await FirebaseGuestSession.join(code, name.trim() || "玩家");
+      const s = await FirebaseGuestSession.join(code, playerName());
       onEnterRoom(s);
     });
 
   return (
     <div className="setup-screen panel">
       <h2>多人联机</h2>
+      <p className="hint">当前登录账号会提供稳定 uid。创建或加入房间后,刷新页面仍会回到同一身份。</p>
       <label className="field">
-        <span>你的名字</span>
-        <input value={name} maxLength={8} placeholder="输入昵称"
+        <span>游戏内显示名</span>
+        <input value={name} maxLength={12} placeholder={defaultName || "输入昵称"}
           onChange={(e) => setName(e.target.value)} />
       </label>
 

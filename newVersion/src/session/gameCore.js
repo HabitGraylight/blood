@@ -1,6 +1,7 @@
-/**
- * GameCore:一局游戏的宿主核心 —— 引擎 + AI 玩家 + 聊天 + 权限校验。
- * 单机模式直接使用;联机模式由房主端使用并把视图发布到 Firebase。
+﻿/**
+ * GameCore: one authoritative game instance.
+ * It wraps the engine, AI driver and chat log, and can be serialized so refresh
+ * does not throw the player back to the home screen.
  */
 import { GameEngine } from "../core/engine.js";
 import { playerView, storytellerView } from "../core/view.js";
@@ -9,29 +10,46 @@ import { AIDriver } from "./aiDriver.js";
 import { createRng, randomSeed } from "../core/rng.js";
 
 export class GameCore {
-  /**
-   * @param players [{ id, name, isHuman, persona }] 按座位顺序
-   * @param onUpdate 状态或聊天变化时回调
-   */
   constructor(players, onUpdate, options = {}) {
     this.onUpdate = onUpdate;
-    this.scriptId = options.scriptId || "trouble-brewing";
-    this.storytellerId = options.storytellerId || null;
-    this.chat = []; // { id, fromSeat, fromName, to, text, ts }
-    this.chatSeq = 0;
+    this.storytellerId = options.storytellerId || options.snapshot?.storytellerId || null;
+    this.chat = options.snapshot?.chat ? [...options.snapshot.chat] : [];
+    this.chatSeq = options.snapshot?.chatSeq || this.chat.reduce((max, c) => Math.max(max, c.id || 0), 0);
 
-    this.engine = GameEngine.create(players, {
-      seed: options.seed,
+    if (options.snapshot?.engineState) {
+      this.engine = GameEngine.hydrate(options.snapshot.engineState);
+      this.scriptId = this.engine.state.scriptId || options.scriptId || "trouble-brewing";
+    } else {
+      this.scriptId = options.scriptId || "trouble-brewing";
+      this.engine = GameEngine.create(players, {
+        seed: options.seed,
+        scriptId: this.scriptId,
+        storytellerMode: this.storytellerId ? "human" : "auto"
+      });
+    }
+
+    this.rng = createRng(options.aiSeed != null ? options.aiSeed : randomSeed());
+    this._mountAI();
+  }
+
+  static hydrate(snapshot, onUpdate, options = {}) {
+    return new GameCore([], onUpdate, { ...options, snapshot });
+  }
+
+  serialize() {
+    return {
       scriptId: this.scriptId,
-      storytellerMode: this.storytellerId ? "human" : "auto"
-    });
-    this.rng = createRng(randomSeed());
+      storytellerId: this.storytellerId,
+      engineState: this.engine.serialize(),
+      chat: this.chat.slice(-500),
+      chatSeq: this.chatSeq
+    };
+  }
 
+  _mountAI() {
     this.aiPlayers = new Map();
     for (const p of this.engine.state.players) {
-      if (!p.isHuman) {
-        this.aiPlayers.set(p.seat, new AIPlayer(p.seat, p.persona, this.rng));
-      }
+      if (!p.isHuman) this.aiPlayers.set(p.seat, new AIPlayer(p.seat, p.persona, this.rng));
     }
 
     this.driver = new AIDriver({
@@ -77,19 +95,10 @@ export class GameCore {
     return this.chat;
   }
 
-  /** 某座位可见的聊天:公开消息 + 与自己相关的私聊 */
   getChatForSeat(seat) {
-    return this.chat.filter(
-      (c) => c.to == null || c.to === seat || c.fromSeat === seat
-    );
+    return this.chat.filter((c) => c.to == null || c.to === seat || c.fromSeat === seat);
   }
 
-  /* ---------------- 玩家动作(带权限校验) ---------------- */
-
-  /**
-   * 以某玩家身份分发动作。座位字段一律以调用者实际座位覆盖,防止伪造。
-   * endDay 需要 isHost 权限(线上适配:房主代表全体宣布黄昏)。
-   */
   dispatchFor(playerId, action, { isHost = false } = {}) {
     const seat = this.seatOf(playerId);
     if (seat < 0) return { ok: false, error: "你不在本局游戏中" };
@@ -124,7 +133,6 @@ export class GameCore {
     return res;
   }
 
-
   dispatchStoryteller(action) {
     const allowed = new Set([
       "storytellerSetInfoOverride",
@@ -143,18 +151,15 @@ export class GameCore {
     }
     return res;
   }
-  /** 发送聊天(公开或私聊)。返回 {ok} */
+
   chatFrom(playerId, text, toSeat = null) {
     const seat = this.seatOf(playerId);
     if (seat < 0) return { ok: false, error: "你不在本局游戏中" };
     const trimmed = String(text || "").trim();
     if (!trimmed) return { ok: false, error: "消息为空" };
-    if (this.engine.state.phase === "night") {
-      return { ok: false, error: "夜晚请保持安静" };
-    }
-    this._pushChat(seat, trimmed.slice(0, 500), toSeat);
+    if (this.engine.state.phase === "night") return { ok: false, error: "夜晚请保持安静" };
 
-    // 触发 AI 反应
+    this._pushChat(seat, trimmed.slice(0, 500), toSeat);
     if (toSeat == null) {
       this.driver.onHumanChat(seat, trimmed);
     } else if (this.aiPlayers.has(toSeat)) {
@@ -178,20 +183,19 @@ export class GameCore {
   }
 }
 
-/** AI 玩家名字与性格池 */
 export const AI_PERSONAS = [
   { name: "老周", persona: "大嗓门,喜欢带节奏,逢人就要身份" },
   { name: "小林", persona: "谨慎细心,喜欢分析票型和发言矛盾" },
-  { name: "阿豪", persona: "冲动直接,怀疑谁就立刻提名" },
-  { name: "梅姐", persona: "老练沉稳,后期才亮真实想法" },
+  { name: "阿豹", persona: "冲动直接,怀疑谁就立刻提名" },
+  { name: "梅姨", persona: "老练沉稳,后期才亮真实想法" },
   { name: "石头", persona: "话少,但每句都切中要害" },
-  { name: "婉婉", persona: "善于共情,喜欢组建信任小圈子" },
+  { name: "婉婷", persona: "善于共情,喜欢组建信任小圈子" },
   { name: "老赵", persona: "多疑,连自己队友都不太信" },
   { name: "丁丁", persona: "跳脱,偶尔口误暴露信息" },
   { name: "雪莉", persona: "逻辑派,喜欢列排除法" },
   { name: "大鹏", persona: "爱开玩笑,用玩笑试探别人" },
   { name: "青青", persona: "低调,倾向跟随大多数人投票" },
-  { name: "老魏", persona: "喜欢私聊搞小动作,串联投票" },
+  { name: "老鬼", persona: "喜欢私聊搞小动作,串联投票" },
   { name: "南南", persona: "首日激进,喜欢逼人对跳" },
   { name: "灰灰", persona: "存在感低,关键时刻突然发力" }
 ];

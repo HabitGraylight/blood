@@ -3,12 +3,18 @@ import { isFirebaseConfigured } from "../../session/firebase.js";
 import { isLLMConfigured } from "../../ai/llm.js";
 import { Icon } from "../components/Icon.jsx";
 
-export function HomeScreen({ onSingle, onMulti }) {
+export function HomeScreen({ user, onSingle, onMulti, onLogout }) {
   const fbReady = isFirebaseConfigured();
   const llmReady = isLLMConfigured();
+  const label = user?.displayName || user?.email || "已登录";
 
   return (
     <div className="home">
+      <div className="account-pill">
+        <span>{label}</span>
+        <button className="link-btn" onClick={onLogout}>退出</button>
+      </div>
+
       <div className="home-tower" aria-hidden>
         <div className="tower-moon" />
         <div className="tower-silhouette" />
@@ -33,7 +39,7 @@ export function HomeScreen({ onSingle, onMulti }) {
           <span className="mode-name">多人 · 联机房间</span>
           <span className="mode-desc">
             {fbReady
-              ? "创建或加入房间,与好友在线对局,可混入 AI 玩家"
+              ? "创建或加入房间,你的账号 uid 会用于同步身份与视图"
               : "需要先在 src/firebase-config.js 填入 Firebase 配置"}
           </span>
         </button>

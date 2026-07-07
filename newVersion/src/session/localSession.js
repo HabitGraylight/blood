@@ -1,36 +1,92 @@
-/**
- * 单机会话:一名真人 + 若干 AI,全部逻辑在本地运行。
- * 对 UI 暴露与联机会话完全一致的接口(subscribe / getView / getChat / 各动作)。
- */
-import { GameCore, AI_PERSONAS } from "./gameCore.js";
+﻿import { GameCore, AI_PERSONAS } from "./gameCore.js";
 import { createRng, randomSeed } from "../core/rng.js";
 
 const HUMAN_ID = "human";
+const STORAGE_KEY = "botc.local.session.v1";
 
 export class LocalSession {
-  constructor({ playerName, playerCount, scriptId, seed }) {
+  constructor({ playerName, playerCount, scriptId, seed, snapshot } = {}) {
     this.listeners = new Set();
-    this.isHost = true; // 单机模式下真人拥有房主权限(宣布黄昏)
+    this.isHost = true;
     this.mode = "single";
+    this._disposed = false;
+
+    if (snapshot?.core) {
+      this.scriptId = snapshot.scriptId || snapshot.core.scriptId || "trouble-brewing";
+      this.core = GameCore.hydrate(snapshot.core, () => this._handleUpdate());
+      this.mySeat = this.core.seatOf(HUMAN_ID);
+      this.playerName = snapshot.playerName || this.core.state.players[this.mySeat]?.name || "我";
+      this.playerCount = this.core.state.players.length;
+      this.core.start();
+      this._save();
+      return;
+    }
 
     const rng = createRng(seed != null ? seed : randomSeed());
-    const personas = rng.shuffle(AI_PERSONAS).slice(0, playerCount - 1);
+    const total = playerCount || 8;
+    const personas = rng.shuffle(AI_PERSONAS).slice(0, total - 1);
     const players = personas.map((p) => ({
-      id: `ai-${p.name}`, name: p.name, isHuman: false, persona: p.persona
+      id: `ai-${p.name}`,
+      name: p.name,
+      isHuman: false,
+      persona: p.persona
     }));
-    // 真人随机入座
-    const humanSeat = rng.int(playerCount);
+
+    const humanSeat = rng.int(total);
+    this.playerName = playerName || "我";
+    this.playerCount = total;
     players.splice(humanSeat, 0, {
-      id: HUMAN_ID, name: playerName || "你", isHuman: true, persona: null
+      id: HUMAN_ID,
+      name: this.playerName,
+      isHuman: true,
+      persona: null
     });
 
     this.scriptId = scriptId || "trouble-brewing";
-    this.core = new GameCore(players, () => this._notify(), { scriptId: this.scriptId });
+    this.core = new GameCore(players, () => this._handleUpdate(), { scriptId: this.scriptId });
     this.mySeat = this.core.seatOf(HUMAN_ID);
     this.core.start();
+    this._save();
   }
 
-  /* ---------- UI 接口 ---------- */
+  static resume() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const snapshot = JSON.parse(raw);
+      if (!snapshot?.core?.engineState) return null;
+      return new LocalSession({ snapshot });
+    } catch (error) {
+      console.warn("恢复单机游戏失败:", error);
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+  }
+
+  static clearSaved() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  _handleUpdate() {
+    this._save();
+    this._notify();
+  }
+
+  _save() {
+    if (this._disposed || !this.core) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        mode: "single",
+        playerName: this.playerName,
+        playerCount: this.playerCount,
+        scriptId: this.scriptId,
+        savedAt: Date.now(),
+        core: this.core.serialize()
+      }));
+    } catch (error) {
+      console.warn("保存单机游戏失败:", error);
+    }
+  }
 
   subscribe(cb) {
     this.listeners.add(cb);
@@ -74,6 +130,8 @@ export class LocalSession {
   }
 
   leave() {
+    this._disposed = true;
+    LocalSession.clearSaved();
     this.core.dispose();
     this.listeners.clear();
   }

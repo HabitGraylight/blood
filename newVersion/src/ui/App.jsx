@@ -1,55 +1,177 @@
-﻿import React, { useState, useCallback } from "react";
+﻿import React, { useState, useCallback, useEffect } from "react";
+import { AuthScreen } from "./screens/AuthScreen.jsx";
 import { HomeScreen } from "./screens/HomeScreen.jsx";
 import { SingleSetupScreen } from "./screens/SingleSetupScreen.jsx";
 import { MultiLobbyScreen } from "./screens/MultiLobbyScreen.jsx";
 import { RoomScreen } from "./screens/RoomScreen.jsx";
 import { GameScreen } from "./screens/GameScreen.jsx";
 import { LocalSession } from "../session/localSession.js";
+import { FirebaseHostSession } from "../session/firebaseSession.js";
+import { watchAuth, logout } from "../session/firebase.js";
 
-/**
- * 顶层路由(简单状态机,无需 router):
- * home -> single-setup -> game
- * home -> multi-lobby -> room(大厅) -> game
- */
+const VALID_SCREENS = new Set(["home", "single", "multi", "room", "game"]);
+
+function screenFromHash() {
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  return VALID_SCREENS.has(raw) ? raw : "home";
+}
+
+function writeHash(screen) {
+  const next = `#/${screen}`;
+  if (window.location.hash !== next) window.history.replaceState(null, "", next);
+}
+
+async function restoreSessionForRoute(route) {
+  if (route === "game") {
+    const local = LocalSession.resume();
+    if (local) return { session: local, screen: "game" };
+  }
+
+  if (route === "game" || route === "room") {
+    try {
+      const remote = await FirebaseHostSession.resumeSaved();
+      if (remote) {
+        return {
+          session: remote,
+          screen: remote.status === "playing" || route === "game" ? "game" : "room"
+        };
+      }
+    } catch (error) {
+      console.warn("恢复联机房间失败:", error);
+    }
+  }
+
+  return null;
+}
+
 export function App() {
-  const [screen, setScreen] = useState("home");
+  const [authReady, setAuthReady] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
+  const [screen, setScreen] = useState("restoring");
   const [session, setSession] = useState(null);
+
+  const navigate = useCallback((next) => {
+    writeHash(next);
+    setScreen(next);
+  }, []);
+
+  useEffect(() => {
+    const unwatch = watchAuth((user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+      if (!user) {
+        if (session) session.leave();
+        setSession(null);
+        setScreen("auth");
+      }
+    });
+    return () => unwatch();
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || !authUser) return;
+    let cancelled = false;
+
+    const restore = async () => {
+      const route = screenFromHash();
+      const restored = await restoreSessionForRoute(route);
+      if (cancelled) return;
+      if (restored) {
+        setSession(restored.session);
+        setScreen(restored.screen);
+        writeHash(restored.screen);
+        return;
+      }
+      const fallback = route === "game" || route === "room" ? "home" : route;
+      setScreen(fallback);
+      writeHash(fallback);
+    };
+
+    restore();
+
+    const onHashChange = async () => {
+      const next = screenFromHash();
+      if ((next === "game" || next === "room") && !session) {
+        const restored = await restoreSessionForRoute(next);
+        if (restored) {
+          setSession(restored.session);
+          setScreen(restored.screen);
+          writeHash(restored.screen);
+          return;
+        }
+        navigate("home");
+        return;
+      }
+      setScreen(next);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, [authReady, authUser, navigate]);
 
   const goHome = useCallback(() => {
     if (session) session.leave();
     setSession(null);
-    setScreen("home");
-  }, [session]);
+    navigate("home");
+  }, [session, navigate]);
 
   const startSingle = useCallback((playerName, playerCount, scriptId) => {
     const s = new LocalSession({ playerName, playerCount, scriptId });
     setSession(s);
-    setScreen("game");
-  }, []);
+    navigate("game");
+  }, [navigate]);
 
   const enterRoom = useCallback((s) => {
     setSession(s);
-    setScreen("room");
-  }, []);
+    navigate("room");
+  }, [navigate]);
+
+  const handleLogout = useCallback(async () => {
+    if (session) session.leave();
+    setSession(null);
+    await logout();
+    writeHash("home");
+    setScreen("auth");
+  }, [session]);
+
+  if (!authReady || screen === "restoring") {
+    return (
+      <div className="app app-shell route-restoring">
+        <div className="route-loading panel">正在翻开上一次的魔典……</div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="app app-shell route-auth">
+        <AuthScreen />
+      </div>
+    );
+  }
 
   return (
-    <div className="app">
+    <div className={`app app-shell route-${screen}`}>
       {screen === "home" && (
         <HomeScreen
-          onSingle={() => setScreen("single-setup")}
-          onMulti={() => setScreen("multi-lobby")}
+          user={authUser}
+          onLogout={handleLogout}
+          onSingle={() => navigate("single")}
+          onMulti={() => navigate("multi")}
         />
       )}
-      {screen === "single-setup" && (
+      {screen === "single" && (
         <SingleSetupScreen onStart={startSingle} onBack={goHome} />
       )}
-      {screen === "multi-lobby" && (
-        <MultiLobbyScreen onEnterRoom={enterRoom} onBack={goHome} />
+      {screen === "multi" && (
+        <MultiLobbyScreen onEnterRoom={enterRoom} onBack={goHome} user={authUser} />
       )}
       {screen === "room" && session && (
         <RoomScreen
           session={session}
-          onGameStart={() => setScreen("game")}
+          onGameStart={() => navigate("game")}
           onLeave={goHome}
         />
       )}
@@ -59,4 +181,3 @@ export function App() {
     </div>
   );
 }
-
