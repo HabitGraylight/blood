@@ -97,11 +97,11 @@ input:focus, select:focus { border-color: var(--gold); }
 .link-btn:hover { color: var(--gold-bright); text-decoration: underline; }
 
 .btn-row { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; align-items: center; flex-wrap: wrap; }
-.hint { color: var(--ink-dim); font-size: 0.88rem; line-height: 1.5; }
+.hint { color: var(--ink-dim); font-size: 0.95rem; line-height: 1.5; }
 .error { color: var(--evil); }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
-.field > span { color: var(--ink-dim); font-size: 0.9rem; }
+.field > span { color: var(--ink-dim); font-size: 1rem; }
 
 .toast {
   position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
@@ -156,7 +156,7 @@ input:focus, select:focus { border-color: var(--gold); }
 .mode-desc { font-size: 0.88rem; color: var(--ink-dim); line-height: 1.5; }
 
 .home-footer { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 18px; z-index: 1; }
-.home-note { color: var(--ink-dim); font-size: 0.8rem; letter-spacing: 0.1em; }
+.home-note { color: var(--ink-dim); font-size: 0.85rem; letter-spacing: 0.1em; }
 
 /* ---------- 设置/大厅屏 ---------- */
 .setup-screen {
@@ -1106,7 +1106,8 @@ input:focus, select:focus, textarea:focus {
   border-radius: 999px;
   color: var(--ink-dim);
   background: transparent;
-  padding: 9px 14px;
+  padding: 11px 14px;
+  font-size: 20px;
 }
 .auth-switch button.active {
   color: var(--gold-bright);
@@ -1167,4 +1168,76 @@ input:focus, select:focus, textarea:focus {
     top: 12px;
     right: 12px;
   }
+}
+
+
+
+
+
+/* ---------- Fixed circular town table ---------- */
+.center-panel {
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.town-square {
+  --table-size: min(74vh, 100%, 820px);
+  flex: 0 0 var(--table-size);
+  width: var(--table-size);
+  height: var(--table-size);
+  min-width: 520px;
+  min-height: 520px;
+  max-width: none;
+  aspect-ratio: auto;
+  margin: auto;
+}
+.town-square::before {
+  left: 50%;
+  top: 50%;
+  width: 86%;
+  height: 86%;
+  inset: auto;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+.square-center {
+  width: 34%;
+  height: 34%;
+  aspect-ratio: auto;
+}
+
+@media (max-width: 1180px) {
+  .town-square {
+    --table-size: min(68vh, 100%, 680px);
+    min-width: 430px;
+    min-height: 430px;
+  }
+}
+
+@media (max-width: 900px) {
+  .center-panel { overflow-x: auto; justify-content: flex-start; }
+  .town-square {
+    --table-size: min(92vw, 620px);
+    min-width: 360px;
+    min-height: 360px;
+  }
+}
+
+/* ---------- Town table alignment fix ---------- */
+.town-square {
+  border-radius: 50%;
+  border: 1px solid rgba(232,198,132,0.24);
+  background:
+    repeating-conic-gradient(from -8deg, rgba(232,198,132,0.10) 0 1deg, transparent 1deg 15deg),
+    radial-gradient(circle at 50% 50%, rgba(45, 32, 59, 0.34) 0 33%, rgba(16, 10, 21, 0.72) 34% 100%);
+  box-shadow: inset 0 0 58px rgba(0,0,0,0.50), 0 28px 52px rgba(0,0,0,0.42);
+}
+.town-square::before {
+  content: none;
+  display: none;
+}
+.square-center {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
