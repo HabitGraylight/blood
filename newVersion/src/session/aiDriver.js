@@ -26,6 +26,9 @@ export class AIDriver {
     this.pushChat = opts.pushChat;
     this.onChange = opts.onChange;
     this.rng = opts.rng;
+    // AI 说书人:getStoryteller() 返回 AIStoryteller 或 null(人类说书人未托管时)
+    this.getStoryteller = opts.getStoryteller || (() => null);
+    this.getStorytellerView = opts.getStorytellerView || (() => null);
     this.scheduled = new Set(); // 已调度任务的 key
     this.dayPlan = null; // { day, speakQueue, nomQueue, busy }
     this.disposed = false;
@@ -53,9 +56,66 @@ export class AIDriver {
     const s = this.engine.state;
     if (s.winner) return;
 
-    if (s.phase === "night") this._tickNight();
-    else if (s.dayStage === "voting") this._tickVote();
-    else if (s.phase === "day") this._tickDay();
+    // 待裁定事项优先:AI 说书人裁定;人类说书人则等待控制台操作
+    if (s.pendingStorytellerDecision) {
+      this._tickStorytellerDecision();
+      return;
+    }
+
+    if (s.phase === "night") {
+      this._tickNightMemo();
+      this._tickNight();
+    } else if (s.dayStage === "voting") this._tickVote();
+    else if (s.phase === "day") {
+      this._tickDawnNarration();
+      this._tickDay();
+    }
+  }
+
+  /** 入夜后让每个 AI 浓缩更新长期记忆(LLM 未配置时为空操作) */
+  _tickNightMemo() {
+    const s = this.engine.state;
+    if (s.night < 2) return; // 第一夜之前没有白天可总结
+    this._once(`memo:${s.night}`, async () => {
+      for (const [seat, ai] of this.aiPlayers) {
+        if (this.disposed || this.engine.state.winner) return;
+        await ai.updateMemo(this._viewOf(seat), this.getChatFor(seat));
+        await delay(200);
+      }
+    });
+  }
+
+  /* ---------------- AI 说书人 ---------------- */
+
+  _tickStorytellerDecision() {
+    const storyteller = this.getStoryteller();
+    if (!storyteller) return; // 人类说书人:等待控制台裁定
+    const d = this.engine.state.pendingStorytellerDecision;
+    this._once(`stdec:${d.id}`, async () => {
+      await delay(500 + this.rng.int(800));
+      if (this.disposed) return;
+      const current = this.engine.state.pendingStorytellerDecision;
+      if (!current || current.id !== d.id) return;
+      const { choice, reason } = await storyteller.decide(this.getStorytellerView(), current);
+      this._dispatch({ type: "storytellerDecide", decisionId: current.id, choice, reason });
+    });
+  }
+
+  /** 天亮后的氛围旁白(每个白天一次) */
+  _tickDawnNarration() {
+    const storyteller = this.getStoryteller();
+    if (!storyteller) return;
+    const s = this.engine.state;
+    this._once(`narrate:dawn:${s.day}`, async () => {
+      const deaths = s.nightKills.map((seat) => s.players[seat].name);
+      const event = { kind: "dawn", day: s.day, deaths };
+      await delay(600);
+      if (this.disposed) return;
+      const text = await storyteller.narrate(this.getStorytellerView(), event);
+      if (text && this.engine.state.phase === "day" && !this.engine.state.winner) {
+        this._dispatch({ type: "storytellerNarrate", text });
+      }
+    });
   }
 
   _once(key, fn) {
@@ -159,10 +219,49 @@ export class AIDriver {
       return;
     }
 
-    // 讨论与提名都结束:若存活玩家全是 AI,自动进入黄昏,防止对局卡死
+    // 讨论与提名都结束:进入收尾节奏
     const humansAlive = this.engine.state.players.some(
       (p) => p.alive && !this.aiPlayers.has(p.seat)
     );
+    const storyteller = this.getStoryteller();
+
+    if (storyteller) {
+      // AI 说书人控制节奏:讨论 → 开放提名(留出真人操作窗口) → 宣布黄昏
+      if (s.dayStage === "discussion" || s.dayStage === "whispers") {
+        this._once(`st:open-nom:${s.night}:${s.day}`, async () => {
+          await delay(humansAlive ? 20000 : 3000);
+          if (this.disposed) return;
+          const st = this.engine.state;
+          if (st.phase === "day" && ["discussion", "whispers"].includes(st.dayStage) && st.day === s.day && !st.pendingStorytellerDecision) {
+            this._dispatch({
+              type: "storytellerAdvancePhase",
+              stage: "nominations",
+              durationMs: humansAlive ? 60000 : 6000
+            });
+          }
+        });
+      } else if (s.dayStage === "nominations") {
+        this._once(`st:dusk:${s.night}:${s.day}`, async () => {
+          await delay(humansAlive ? 60000 : 5000);
+          // 等待进行中的投票/裁定结束再宣布黄昏
+          let guard = 0;
+          while (!this.disposed && guard++ < 120) {
+            const st = this.engine.state;
+            if (st.phase !== "day" || st.day !== s.day || st.winner) return;
+            if (st.dayStage !== "voting" && !st.pendingStorytellerDecision) break;
+            await delay(1500);
+          }
+          if (this.disposed) return;
+          const st = this.engine.state;
+          if (st.phase === "day" && st.day === s.day && !st.winner) {
+            this._dispatch({ type: "endDay" });
+          }
+        });
+      }
+      return;
+    }
+
+    // 无说书人:若存活玩家全是 AI,自动进入黄昏,防止对局卡死
     if (!humansAlive) {
       this._once(`dusk:${s.night}:${s.day}`, async () => {
         await delay(4000);
@@ -177,8 +276,8 @@ export class AIDriver {
 
   /* ---------------- 对话反应 ---------------- */
 
-  /** 真人发公开消息后,可能有一个 AI 回应 */
-  onHumanChat(fromSeat, text) {
+  /** 真人发公开消息后,可能有一个 AI 回应。chatId 保证同一条消息只触发一次。 */
+  onHumanChat(fromSeat, text, chatId) {
     const s = this.engine.state;
     if (s.phase !== "day" || this.disposed) return;
     const mentioned = [...this.aiPlayers.keys()].filter(
@@ -192,7 +291,7 @@ export class AIDriver {
     if (!pool.length) return;
     const seat = this.rng.pick(pool);
 
-    this._once(`react:${Date.now()}:${seat}`, async () => {
+    this._once(`react:${chatId != null ? chatId : Date.now()}`, async () => {
       await delay(1500 + this.rng.int(2500));
       if (this.disposed || this.engine.state.phase !== "day") return;
       const ai = this.aiPlayers.get(seat);
@@ -202,11 +301,11 @@ export class AIDriver {
   }
 
   /** 真人私聊 AI,AI 回复 */
-  onWhisper(fromSeat, toSeat, text) {
+  onWhisper(fromSeat, toSeat, text, chatId) {
     const ai = this.aiPlayers.get(toSeat);
     if (!ai || this.disposed) return;
     const fromName = this.engine.state.players[fromSeat].name;
-    this._once(`whisper:${Date.now()}:${toSeat}`, async () => {
+    this._once(`whisper:${chatId != null ? chatId : Date.now()}`, async () => {
       await delay(1200 + this.rng.int(2000));
       if (this.disposed) return;
       const reply = await ai.replyWhisper(

@@ -1,0 +1,12 @@
+# Cloudflare Worker 配置:LLM 转发代理
+# 部署: npx wrangler deploy --config workers/wrangler.toml
+# 密钥: npx wrangler secret put MINIMAX_API_KEY --config workers/wrangler.toml
+#       npx wrangler secret put PROXY_TOKEN --config workers/wrangler.toml   (可选)
+
+name = "botc-llm-proxy"
+main = "llm-proxy.js"
+compatibility_date = "2026-01-01"
+
+# 非敏感配置可直接写在这里;API key 必须用 wrangler secret 设置
+[vars]
+MINIMAX_BASE_URL = "https://api.minimaxi.com/anthropic"

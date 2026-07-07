@@ -3,7 +3,7 @@ import { GameEngine } from "../src/core/engine.js";
 import { drawRoles } from "../src/core/setup.js";
 import { resolveVoteResult, checkWin } from "../src/core/rules.js";
 import { createRng } from "../src/core/rng.js";
-import { ROLES, TEAM, SETUP_TABLE } from "../src/core/data/roles.js";
+import { ROLES, TEAM, SETUP_TABLE } from "../src/scripts/trouble-brewing.js";
 import { playerView, storytellerView } from "../src/core/view.js";
 
 function makePlayers(n) {
@@ -342,6 +342,12 @@ describe("完整对局流程", () => {
     expect(st.seats[4].role).toBe("imp");
     expect(pv.seats[4].revealedRole).toBe(null);
   });
+  it("auto 模式永远不会产生待裁定事项", () => {
+    const engine = GameEngine.create(makePlayers(7), { seed: 7, fixedRoles: ROLES_7 });
+    autoNight(engine);
+    expect(engine.state.pendingStorytellerDecision).toBe(null);
+  });
+
   it("随机对局最终总会分出胜负", () => {
     for (let seed = 100; seed < 105; seed++) {
       const engine = GameEngine.create(makePlayers(9), { seed });
@@ -361,6 +367,249 @@ describe("完整对局流程", () => {
           engine.dispatch({ type: "vote", seat, up: rng.chance(0.6) });
         } else if (s.phase === "day") {
           // 随机提名或结束白天
+          const alive = s.players.filter((p) => p.alive);
+          const nominators = alive.filter((p) => !s.nominatorsToday.includes(p.seat));
+          const nominees = alive.filter((p) => !s.nominatedToday.includes(p.seat));
+          if (nominators.length && nominees.length && rng.chance(0.7)) {
+            engine.dispatch({
+              type: "nominate",
+              nominator: rng.pick(nominators).seat,
+              nominee: rng.pick(nominees).seat
+            });
+          } else {
+            engine.dispatch({ type: "endDay" });
+          }
+        }
+      }
+      expect(engine.state.winner).toBeTruthy();
+    }
+  });
+});
+
+describe("说书人裁量(决策挂起)", () => {
+  /** human 模式下推进夜晚:自动应答裁定(可按类型定制)与夜间选择 */
+  function runNight(engine, deciders = {}, nightActions = {}) {
+    let guard = 0;
+    const seen = [];
+    while (engine.state.phase === "night" && guard++ < 300) {
+      const d = engine.state.pendingStorytellerDecision;
+      if (d) {
+        seen.push(d);
+        const choice = deciders[d.type] ? deciders[d.type](d) : d.defaultIndex;
+        const res = engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice });
+        expect(res.ok).toBe(true);
+        continue;
+      }
+      const pa = engine.state.pendingAction;
+      if (!pa) break;
+      let targets;
+      if (nightActions[pa.roleId]) {
+        targets = nightActions[pa.roleId](engine.state);
+      } else {
+        const alive = engine.state.players.filter((p) => p.alive && p.seat !== pa.seat);
+        targets = [];
+        for (let i = 0; i < pa.targets; i++) targets.push(alive[i % alive.length].seat);
+      }
+      engine.dispatch({ type: "nightAction", seat: pa.seat, targets });
+    }
+    return seen;
+  }
+
+  function humanGame(n, seed, fixedRoles) {
+    return GameEngine.create(makePlayers(n), { seed, fixedRoles, storytellerMode: "human" });
+  }
+
+  it("首夜挂起酒鬼伪装裁量,改选后生效", () => {
+    const engine = humanGame(8, 1, ["drunk", "empath", "chef", "soldier", "mayor", "saint", "poisoner", "imp"]);
+    const d = engine.state.pendingStorytellerDecision;
+    expect(d).toBeTruthy();
+    expect(d.type).toBe("setup-drunk");
+    // 选一个非默认且非占卜师的伪装(避免触发红鲱鱼分支影响断言)
+    const idx = d.options.findIndex(
+      (o) => !o.label.includes("(默认)") && o.value.roleId !== "fortuneteller"
+    );
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const chosen = d.options[idx].value.roleId;
+    engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: idx });
+    expect(engine.state.players[0].believedRole).toBe(chosen);
+    // 无占卜师 → 无红鲱鱼裁量,继续夜晚
+    runNight(engine);
+    expect(engine.state.phase).toBe("day");
+  });
+
+  it("首夜挂起红鲱鱼裁量,改选后红鲱鱼转移", () => {
+    const engine = humanGame(7, 7, ["washerwoman", "empath", "fortuneteller", "monk", "soldier", "poisoner", "imp"]);
+    const d = engine.state.pendingStorytellerDecision;
+    expect(d.type).toBe("setup-redherring");
+    // 指定 0 号为红鲱鱼
+    const idx = d.options.findIndex((o) => o.value.seat === 0);
+    engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: idx });
+    expect(engine.state.players[0].redHerring).toBe(true);
+    expect(engine.state.players.filter((p) => p.redHerring).length).toBe(1);
+  });
+
+  it("挂起期间普通玩家动作被冻结", () => {
+    const engine = humanGame(7, 7, ["washerwoman", "empath", "fortuneteller", "monk", "soldier", "poisoner", "imp"]);
+    expect(engine.state.pendingStorytellerDecision).toBeTruthy();
+    const res = engine.dispatch({ type: "nominate", nominator: 0, nominee: 5 });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("说书人");
+  });
+
+  it("中毒共情者的信息由说书人从 0/1/2 中裁定", () => {
+    const engine = humanGame(7, 7, ["washerwoman", "empath", "fortuneteller", "monk", "soldier", "poisoner", "imp"]);
+    let empathDecision = null;
+    runNight(engine, {
+      "night-info": (d) => {
+        if (d.roleId === "empath" && engine.state.players[1].poisonedBy != null) {
+          empathDecision = d;
+          // 选最大值(明显假信息)
+          return d.options.length - 1;
+        }
+        return d.defaultIndex;
+      }
+    }, {
+      poisoner: () => [1] // 毒共情者
+    });
+    expect(engine.state.phase).toBe("day");
+    expect(empathDecision).toBeTruthy();
+    expect(empathDecision.options.length).toBe(3); // 0/1/2
+    const lastInfo = engine.state.players[1].privateLog.at(-1);
+    expect(lastInfo.text).toContain("2 名邪恶玩家");
+  });
+
+  it("清醒且无间谍/隐士时,厨师与共情者不产生裁量", () => {
+    const engine = humanGame(7, 7, ["chef", "empath", "fortuneteller", "monk", "soldier", "poisoner", "imp"]);
+    const seen = runNight(engine, {}, { poisoner: () => [3] }); // 毒僧侣,不影响信息角色
+    expect(engine.state.phase).toBe("day");
+    const infoDecisions = seen.filter((d) => d.type === "night-info");
+    expect(infoDecisions.every((d) => d.roleId !== "chef" && d.roleId !== "empath")).toBe(true);
+    // 但他们依然收到了唯一的真实信息
+    expect(engine.state.players[0].privateLog.some((l) => l.text.includes("相邻的邪恶玩家"))).toBe(true);
+    expect(engine.state.players[1].privateLog.some((l) => l.text.includes("邪恶玩家"))).toBe(true);
+  });
+
+  it("镇长被刀时挂起转移裁量,转移后替死者死亡", () => {
+    const engine = humanGame(7, 11, ["chef", "empath", "fortuneteller", "monk", "mayor", "poisoner", "imp"]);
+    runNight(engine, {}, { poisoner: () => [1], monk: () => [1] });
+    engine.dispatch({ type: "endDay" }); // 无处决入夜
+    let mayorDecision = null;
+    runNight(engine, {
+      "mayor-redirect": (d) => {
+        mayorDecision = d;
+        return d.options.findIndex((o) => o.value.seat === 0); // 转移给厨师
+      }
+    }, {
+      poisoner: () => [1],
+      monk: () => [1],
+      imp: () => [4] // 刀镇长
+    });
+    expect(mayorDecision).toBeTruthy();
+    expect(engine.state.players[4].alive).toBe(true); // 镇长存活
+    expect(engine.state.players[0].alive).toBe(false); // 厨师替死
+  });
+
+  it("恶魔自杀多爪牙时挂起传位裁量", () => {
+    const engine = humanGame(7, 13, ["chef", "empath", "fortuneteller", "monk", "poisoner", "scarletwoman", "imp"]);
+    runNight(engine, {}, { poisoner: () => [0], monk: () => [0] });
+    engine.dispatch({ type: "endDay" });
+    let starPass = null;
+    runNight(engine, {
+      "star-pass": (d) => {
+        starPass = d;
+        return d.options.findIndex((o) => o.value.seat === 4); // 传给投毒者而非猩红夫人
+      }
+    }, {
+      poisoner: () => [0],
+      monk: () => [0],
+      imp: (s) => [s.players.find((p) => p.role === "imp").seat] // 自杀
+    });
+    expect(starPass).toBeTruthy();
+    // 默认项应指向清醒的猩红夫人
+    expect(starPass.options[starPass.defaultIndex].value.seat).toBe(5);
+    expect(engine.state.players[4].role).toBe("imp");
+    expect(engine.state.winner).toBe(null);
+  });
+
+  it("间谍提名圣女时挂起注册裁定", () => {
+    const engine = humanGame(7, 17, ["chef", "virgin", "monk", "soldier", "mayor", "spy", "imp"]);
+    runNight(engine);
+    expect(engine.state.phase).toBe("day");
+    const res = engine.dispatch({ type: "nominate", nominator: 5, nominee: 1 });
+    expect(res.ok).toBe(true);
+    const d = engine.state.pendingStorytellerDecision;
+    expect(d.type).toBe("virgin-check");
+    engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: 0 }); // 注册为村民
+    expect(engine.state.players[5].alive).toBe(false); // 间谍被处决
+    expect(engine.state.phase).toBe("night");
+  });
+
+  it("真村民提名圣女无需裁定直接触发", () => {
+    const engine = humanGame(7, 17, ["chef", "virgin", "monk", "soldier", "mayor", "spy", "imp"]);
+    runNight(engine);
+    engine.dispatch({ type: "nominate", nominator: 0, nominee: 1 });
+    expect(engine.state.pendingStorytellerDecision).toBe(null);
+    expect(engine.state.players[0].alive).toBe(false);
+    expect(engine.state.phase).toBe("night");
+  });
+
+  it("杀手射击隐士时挂起注册裁定", () => {
+    const engine = humanGame(7, 19, ["slayer", "chef", "monk", "soldier", "recluse", "poisoner", "imp"]);
+    runNight(engine, {}, { poisoner: () => [1] });
+    expect(engine.state.phase).toBe("day");
+    const res = engine.dispatch({ type: "slayerShot", seat: 0, target: 4 });
+    expect(res.ok).toBe(true);
+    const d = engine.state.pendingStorytellerDecision;
+    expect(d.type).toBe("slayer-shot");
+    const dieIdx = d.options.findIndex((o) => o.value.dies);
+    engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: dieIdx });
+    expect(engine.state.players[4].alive).toBe(false);
+  });
+
+  it("裁定记录只出现在说书人视图,玩家视图不可见", () => {
+    const engine = humanGame(7, 7, ["washerwoman", "empath", "fortuneteller", "monk", "soldier", "poisoner", "imp"]);
+    const d = engine.state.pendingStorytellerDecision;
+    engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: d.defaultIndex });
+    const st = storytellerView(engine.state);
+    const pv = playerView(engine.state, 0);
+    expect(st.log.some((l) => l.type === "storyteller")).toBe(true);
+    expect(pv.log.some((l) => l.type === "storyteller")).toBe(false);
+    expect(pv.pendingStorytellerDecision).toBeUndefined();
+  });
+
+  it("human 模式序列化恢复后可继续裁定", () => {
+    const engine = humanGame(7, 7, ["washerwoman", "empath", "fortuneteller", "monk", "soldier", "poisoner", "imp"]);
+    const snapshot = engine.serialize();
+    const restored = GameEngine.hydrate(snapshot);
+    const d = restored.state.pendingStorytellerDecision;
+    expect(d).toBeTruthy();
+    const res = restored.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: d.defaultIndex });
+    expect(res.ok).toBe(true);
+  });
+
+  it("human 模式完整对局可分出胜负", () => {
+    for (let seed = 400; seed < 403; seed++) {
+      const engine = GameEngine.create(makePlayers(9), { seed, storytellerMode: "human" });
+      const rng = createRng(seed * 11);
+      let guard = 0;
+      while (!engine.state.winner && guard++ < 800) {
+        const s = engine.state;
+        const d = s.pendingStorytellerDecision;
+        if (d) {
+          engine.dispatch({ type: "storytellerDecide", decisionId: d.id, choice: rng.int(d.options.length) });
+          continue;
+        }
+        if (s.phase === "night") {
+          const pa = s.pendingAction;
+          if (!pa) break;
+          const pool = s.players.filter((p) => (p.alive || pa.roleId === "ravenkeeper") && !(pa.notSelf && p.seat === pa.seat));
+          const targets = [];
+          for (let i = 0; i < pa.targets; i++) targets.push(rng.pick(pool).seat);
+          engine.dispatch({ type: "nightAction", seat: pa.seat, targets });
+        } else if (s.dayStage === "voting") {
+          const seat = s.currentVote.order[s.currentVote.index];
+          engine.dispatch({ type: "vote", seat, up: rng.chance(0.6) });
+        } else if (s.phase === "day") {
           const alive = s.players.filter((p) => p.alive);
           const nominators = alive.filter((p) => !s.nominatorsToday.includes(p.seat));
           const nominees = alive.filter((p) => !s.nominatedToday.includes(p.seat));

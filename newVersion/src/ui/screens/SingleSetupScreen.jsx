@@ -5,6 +5,7 @@ export function SingleSetupScreen({ onStart, onBack }) {
   const [name, setName] = useState("我");
   const [count, setCount] = useState(8);
   const [scriptId, setScriptId] = useState(DEFAULT_SCRIPT_ID);
+  const [aiStoryteller, setAiStoryteller] = useState(true);
   const script = AVAILABLE_SCRIPTS.find((s) => s.id === scriptId) || AVAILABLE_SCRIPTS[0];
   const setup = getSetupForScript(scriptId, count);
 
@@ -40,11 +41,24 @@ export function SingleSetupScreen({ onStart, onBack }) {
           <p className="hint">男爵在场时会改为 +2 外来者 / -2 村民,天黑后才见分晓……</p>
         </div>
       )}
+      <label className="field checkbox-field">
+        <span>AI 说书人</span>
+        <input
+          type="checkbox"
+          checked={aiStoryteller}
+          onChange={(e) => setAiStoryteller(e.target.checked)}
+        />
+      </label>
+      <p className="hint">
+        {aiStoryteller
+          ? "AI 说书人将像真人说书人一样掌控局面:裁定误注册与假信息、控制白天节奏,并为对局配上旁白。"
+          : "关闭后由系统按固定概率自动裁定(经典模式)。"}
+      </p>
       <div className="btn-row">
         <button className="btn ghost" onClick={onBack}>返回</button>
         <button
           className="btn primary"
-          onClick={() => onStart(name.trim() || "我", count, scriptId)}
+          onClick={() => onStart(name.trim() || "我", count, scriptId, aiStoryteller)}
         >
           天黑请闭眼
         </button>

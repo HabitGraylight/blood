@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 玩家视角与说书人视角投影。
  * 玩家视角只暴露其应知信息;说书人视角用于完整魔典和裁定控制台。
  */
@@ -88,7 +88,10 @@ export function playerView(state, seat, scriptArg) {
     pendingAction:
       state.pendingAction && state.pendingAction.seat === seat ? state.pendingAction : null,
     nightActive: state.phase === "night",
-    log: state.log,
+    // 说书人正在裁定(内容保密,玩家只知道在等待)
+    storytellerDeciding: !!state.pendingStorytellerDecision,
+    // 说书人裁定记录不对玩家公开
+    log: state.log.filter((l) => l.type !== "storyteller"),
     announcements: state.announcements || [],
 
     canNominate:
@@ -100,7 +103,10 @@ export function playerView(state, seat, scriptArg) {
     canSlay:
       state.phase === "day" && ["discussion", "whispers", "nominations"].includes(state.dayStage) &&
       me.alive && !me.slayerUsed,
-    canEndDay: false
+    // 白天是否可宣布黄昏(UI 再按 isHost 过滤;非房主玩家不会看到按钮)
+    canEndDay:
+      state.phase === "day" && ["discussion", "whispers", "nominations"].includes(state.dayStage) &&
+      !state.pendingStorytellerDecision
   };
 }
 
@@ -119,6 +125,7 @@ export function storytellerView(state, scriptArg) {
     winner: state.winner,
     winReason: state.winReason,
     pendingAction: state.pendingAction,
+    pendingStorytellerDecision: state.pendingStorytellerDecision || null,
     nightQueue: state.nightQueue,
     nightIndex: state.nightIndex,
     nightKills: state.nightKills,
@@ -173,20 +180,43 @@ export function storytellerView(state, scriptArg) {
 
 export function spectatorView(state, scriptArg) {
   const script = resolveScript(state, scriptArg);
+  const ended = state.phase === "end";
   return {
+    type: "spectator",
+    isSpectator: true,
+    scriptId: state.scriptId || script.id,
+    scriptName: script.name,
     phase: state.phase,
+    dayStage: state.dayStage,
+    dayStageEndsAt: state.dayStageEndsAt || null,
     night: state.night,
     day: state.day,
     winner: state.winner,
     winReason: state.winReason,
+    currentVote: state.currentVote,
+    onBlock: state.onBlock,
+    nominations: state.nominations,
+    nominatedToday: state.nominatedToday,
+    nominatorsToday: state.nominatorsToday,
+    storytellerDeciding: !!state.pendingStorytellerDecision,
     seats: state.players.map((p) => ({
       seat: p.seat,
+      id: p.id,
       name: p.name,
+      isHuman: p.isHuman,
       alive: p.alive,
-      role: state.phase === "end" ? p.role : null,
-      roleName: state.phase === "end" ? roleName(script, p.role) : null
+      ghostVote: p.ghostVote,
+      revealedRole: ended ? p.role : null,
+      revealedRoleName: ended ? roleName(script, p.role) : null,
+      revealedAlignment: ended ? p.alignment : null
     })),
-    log: state.log
+    pendingAction: null,
+    canNominate: false,
+    canVote: false,
+    canSlay: false,
+    canEndDay: false,
+    log: state.log.filter((l) => l.type !== "storyteller"),
+    announcements: state.announcements || []
   };
 }
 

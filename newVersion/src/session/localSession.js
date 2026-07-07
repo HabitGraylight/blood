@@ -5,7 +5,7 @@ const HUMAN_ID = "human";
 const STORAGE_KEY = "botc.local.session.v1";
 
 export class LocalSession {
-  constructor({ playerName, playerCount, scriptId, seed, snapshot } = {}) {
+  constructor({ playerName, playerCount, scriptId, seed, snapshot, aiStoryteller = true } = {}) {
     this.listeners = new Set();
     this.isHost = true;
     this.mode = "single";
@@ -43,7 +43,10 @@ export class LocalSession {
     });
 
     this.scriptId = scriptId || "trouble-brewing";
-    this.core = new GameCore(players, () => this._handleUpdate(), { scriptId: this.scriptId });
+    this.core = new GameCore(players, () => this._handleUpdate(), {
+      scriptId: this.scriptId,
+      aiStoryteller
+    });
     this.mySeat = this.core.seatOf(HUMAN_ID);
     this.core.start();
     this._save();

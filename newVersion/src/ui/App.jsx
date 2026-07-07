@@ -117,8 +117,8 @@ export function App() {
     navigate("home");
   }, [session, navigate]);
 
-  const startSingle = useCallback((playerName, playerCount, scriptId) => {
-    const s = new LocalSession({ playerName, playerCount, scriptId });
+  const startSingle = useCallback((playerName, playerCount, scriptId, aiStoryteller = true) => {
+    const s = new LocalSession({ playerName, playerCount, scriptId, aiStoryteller });
     setSession(s);
     navigate("game");
   }, [navigate]);

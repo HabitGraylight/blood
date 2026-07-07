@@ -8,13 +8,16 @@
  * - prompts/ai-player/public-chat.md  公开发言任务模板
  * - prompts/roles/{roleId}.md     角色专属策略;缺失时用 default.md
  */
-import { roleName } from "../core/data/roles.js";
+import { roleName } from "../scripts/trouble-brewing.js";
 
 // Vite 在构建时把 markdown 内容内联进来
 const roleDocs = import.meta.glob("../../prompts/roles/*.md", {
   eager: true, query: "?raw", import: "default"
 });
 const playerDocs = import.meta.glob("../../prompts/ai-player/*.md", {
+  eager: true, query: "?raw", import: "default"
+});
+const storytellerDocs = import.meta.glob("../../prompts/storyteller/*.md", {
   eager: true, query: "?raw", import: "default"
 });
 
@@ -42,8 +45,16 @@ function seatLine(s) {
   return `${s.seat}号 ${s.name}${tags.length ? ` (${tags.join(",")})` : ""}`;
 }
 
-/** 构建系统提示:行为准则、身份、私密信息、角色策略、性格 */
-export function buildSystemPrompt(view, persona) {
+/** 按天数给出宏观阶段建议 */
+function stageAdvice(view) {
+  const alive = view.seats.filter((s) => s.alive).length;
+  if (alive <= 4) return "残局:每一票都决定胜负。善良应公开全部信息拼死推理;邪恶要争取误导最后的处决。";
+  if (view.day <= 1) return "第一天:信息还少。信息型角色通常先观察、少暴露;可试探他人口风,注意谁急于带节奏。";
+  return "中期:开始交叉验证各方声明,揪出前后矛盾;掌握关键信息的善良角色可考虑公开换取信任。";
+}
+
+/** 构建系统提示:行为准则、身份、私密信息、角色策略、性格、长期记忆 */
+export function buildSystemPrompt(view, persona, memo = null) {
   const you = view.you;
   const lines = [
     `${PLAYER_SYSTEM}`,
@@ -56,7 +67,9 @@ export function buildSystemPrompt(view, persona) {
     you.alive ? "" : "【注意】你已死亡,仍可发言" + (you.ghostVote ? ",还有一次遗书票。" : ",且无法再投票。"),
     "",
     "【角色策略】",
-    roleDoc(you.role)
+    roleDoc(you.role),
+    "",
+    `【阶段建议】${stageAdvice(view)}`
   ];
 
   if (you.evilInfo) {
@@ -78,6 +91,10 @@ export function buildSystemPrompt(view, persona) {
       "【你的私密信息(只有你知道)】",
       ...you.privateLog.map((l) => `- [第${l.night}夜] ${l.text}`)
     );
+  }
+
+  if (memo && memo.summary) {
+    lines.push("", `【你的长期记忆(截至第${memo.updatedDay}天,聊天记录之外的重要事实)】`, memo.summary);
   }
 
   lines.push("", `【性格设定】${persona || "冷静理性,善于观察"}`);
@@ -158,5 +175,75 @@ export function whisperPrompt(view, chatHistory, fromName, text) {
     "",
     `${fromName} 私聊你说:"${text}"。请回复他(20-60字),注意私聊内容其他人看不到,可以交换情报或试探/欺骗。`,
     '只回复 JSON: {"reply": "你的回复"}'
+  ].join("\n");
+}
+
+/** 白天结束后的长期记忆更新 */
+export function memoPrompt(view, chatHistory, memo) {
+  return [
+    buildSituation(view, chatHistory),
+    "",
+    memo && memo.summary ? `【你此前的记忆】${memo.summary}` : "",
+    "这个白天结束了。请把今天的重要情报浓缩进你的长期记忆:1) 谁声称了什么身份/信息 2) 你怀疑谁、为什么 3) 你接下来的计划。合并旧记忆,总长不超过150字。",
+    '只回复 JSON: {"memo": "记忆内容"}'
+  ].filter(Boolean).join("\n");
+}
+
+/* ---------------- AI 说书人提示词 ---------------- */
+
+const STORYTELLER_SYSTEM = (storytellerDocs["../../prompts/storyteller/system.md"] || "").trim();
+
+export function buildStorytellerSystemPrompt() {
+  return [STORYTELLER_SYSTEM, "", RULES_BRIEF].join("\n");
+}
+
+/** 从说书人视角构建完整魔典与局势摘要 */
+export function buildGrimoireSituation(stView) {
+  const lines = [
+    `【局势】第 ${stView.night} 夜 / 第 ${stView.day} 个白天(${stView.phase === "night" ? "夜晚" : "白天"}),存活 ${stView.seats.filter((s) => s.alive).length}/${stView.seats.length} 人。`,
+    "【魔典(完整隐藏信息,严禁泄露)】",
+    ...stView.seats.map((s) => {
+      const marks = [];
+      if (!s.alive) marks.push("死亡");
+      if (s.poisonedBy != null) marks.push("中毒");
+      if (s.protectedBy != null) marks.push("被僧侣保护");
+      if (s.believedRole) marks.push(`酒鬼,自认为是${s.believedRole}`);
+      if (s.redHerring) marks.push("红鲱鱼");
+      return `${s.seat}号 ${s.name}: ${s.roleName}(${s.teamLabel},${s.alignmentLabel})${marks.length ? ` [${marks.join(",")}]` : ""}`;
+    })
+  ];
+  if (stView.onBlock && stView.onBlock.seat != null) {
+    lines.push(`【处决台】${stView.seats[stView.onBlock.seat].name} (${stView.onBlock.votes}票)`);
+  }
+  const recent = stView.log.slice(-12);
+  if (recent.length) lines.push("【近期事件】", ...recent.map((l) => `- ${l.text}`));
+  return lines.join("\n");
+}
+
+/** 裁量决策提示:从合法候选中选择 */
+export function storytellerDecisionPrompt(stView, decision) {
+  return [
+    buildGrimoireSituation(stView),
+    "",
+    `【当前裁定】${decision.title}`,
+    decision.detail || "",
+    "候选项(全部合法,请依据平衡哲学选择):",
+    ...decision.options.map((o, i) => `${i}. ${o.label}${i === decision.defaultIndex ? "(默认)" : ""}`),
+    "",
+    '只回复 JSON: {"choice": 候选序号, "reason": "简短平衡理由"}'
+  ].join("\n");
+}
+
+/** 氛围旁白提示 */
+export function storytellerNarrationPrompt(stView, event) {
+  const desc = event.kind === "dawn"
+    ? (event.deaths && event.deaths.length
+        ? `天亮了,昨晚死亡的是:${event.deaths.join("、")}。`
+        : "天亮了,昨晚是平安夜。")
+    : event.text || "";
+  return [
+    `第 ${event.day} 个白天开始。${desc}`,
+    "请以说书人口吻写 1-2 句中文氛围旁白(30-60字),渲染小镇的紧张气氛,可提及死者名字,但绝不能暗示任何隐藏身份、阵营或夜间行动细节。",
+    '只回复 JSON: {"narration": "旁白文本"}'
   ].join("\n");
 }

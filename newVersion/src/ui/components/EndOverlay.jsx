@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ROLES, TEAM_LABELS, ALIGNMENT_LABELS } from "../../core/data/roles.js";
+import { getScript, TEAM_LABELS, ALIGNMENT_LABELS } from "../../scripts/registry.js";
 import { RoleIcon } from "./RoleIcon.jsx";
 import { Icon } from "./Icon.jsx";
 
@@ -15,6 +15,8 @@ export function EndOverlay({ view, onLeave }) {
   }
 
   const good = view.winner === "good";
+  const script = getScript(view.scriptId);
+  const roles = script.roles || {};
   return (
     <div className="end-overlay">
       <div className={`end-card ${good ? "good-win" : "evil-win"}`}>
@@ -22,7 +24,7 @@ export function EndOverlay({ view, onLeave }) {
         <p className="end-reason">{view.winReason}</p>
         <ul className="reveal-list">
           {view.seats.map((s) => {
-            const role = ROLES[s.revealedRole];
+            const role = roles[s.revealedRole];
             return (
               <li key={s.seat} className={`reveal-item align-${s.revealedAlignment}`}>
                 <span className="reveal-symbol">{role ? <RoleIcon roleId={s.revealedRole} scriptId={view.scriptId} size={34} /> : "?"}</span>

@@ -1,5 +1,5 @@
-﻿import React from "react";
-import { ROLES, roleName } from "../../core/data/roles.js";
+import React from "react";
+import { getScript } from "../../scripts/registry.js";
 import { RoleIcon } from "./RoleIcon.jsx";
 import { Icon } from "./Icon.jsx";
 
@@ -9,7 +9,10 @@ export function RoleCard({ view }) {
   const evilInfo = you.evilInfo || null;
   const minionSeats = Array.isArray(evilInfo?.minionSeats) ? evilInfo.minionSeats : [];
   const bluffs = Array.isArray(evilInfo?.bluffs) ? evilInfo.bluffs : [];
-  const role = ROLES[you.role] || {};
+  const script = getScript(view.scriptId);
+  const roles = script.roles || {};
+  const role = roles[you.role] || {};
+  const roleName = (roleId) => roles[roleId]?.name || roleId;
 
   return (
     <div className="role-card-wrap">

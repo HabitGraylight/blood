@@ -1,5 +1,5 @@
-﻿import React from "react";
-import { ROLES, TEAM_LABELS } from "../../core/data/roles.js";
+import React from "react";
+import { getScript, TEAM_LABELS } from "../../scripts/registry.js";
 import { Icon } from "./Icon.jsx";
 import { RoleIcon } from "./RoleIcon.jsx";
 
@@ -13,6 +13,8 @@ export function TownSquare({ view, selectable, picked, onSeatClick }) {
   const pickedSeats = Array.isArray(picked) ? picked : [];
   const onBlockSeat = view.onBlock?.seat;
   const onBlockPlayer = onBlockSeat != null ? seats.find((s) => s.seat === onBlockSeat) : null;
+  const script = getScript(view.scriptId);
+  const roles = script.roles || {};
 
   return (
     <div className="town-square">
@@ -38,7 +40,7 @@ export function TownSquare({ view, selectable, picked, onSeatClick }) {
         const voteMark = votes[logicalSeat] === true;
         const isVoting = cv && order[cv.index || 0] === logicalSeat;
         const isNominee = cv && cv.nominee === logicalSeat;
-        const role = s.revealedRole ? ROLES[s.revealedRole] : null;
+        const role = s.revealedRole ? roles[s.revealedRole] : null;
 
         return (
           <div

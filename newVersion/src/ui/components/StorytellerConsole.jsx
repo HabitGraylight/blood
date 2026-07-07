@@ -1,6 +1,60 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { Icon } from "./Icon.jsx";
 import { RoleIcon } from "./RoleIcon.jsx";
+
+/** 待裁定面板:展示引擎挂起的裁量决策,人类点选或交给 AI */
+function PendingDecisionPanel({ decision, session, act }) {
+  const [suggestion, setSuggestion] = useState(null);
+  const [suggesting, setSuggesting] = useState(false);
+
+  useEffect(() => {
+    setSuggestion(null);
+    setSuggesting(false);
+  }, [decision?.id]);
+
+  if (!decision) return null;
+
+  const askAI = async () => {
+    if (suggesting || !session.suggestDecision) return;
+    setSuggesting(true);
+    const result = await session.suggestDecision();
+    setSuggesting(false);
+    if (result) setSuggestion(result);
+  };
+
+  return (
+    <section className="story-panel pending-decision-panel">
+      <div className="panel-title"><Icon name="settings" /> 待裁定:{decision.title}</div>
+      {decision.detail && <p className="hint">{decision.detail}</p>}
+      <div className="decision-options">
+        {decision.options.map((o, i) => (
+          <button
+            key={i}
+            className={`btn small ${i === decision.defaultIndex ? "" : "ghost"} ${suggestion && suggestion.choice === i ? "suggested" : ""}`}
+            onClick={() =>
+              act({
+                type: "storytellerDecide",
+                decisionId: decision.id,
+                choice: i,
+                reason: suggestion && suggestion.choice === i ? suggestion.reason : null
+              })
+            }
+          >
+            {o.label}
+            {i === decision.defaultIndex ? " ·默认" : ""}
+            {suggestion && suggestion.choice === i ? " ·AI建议" : ""}
+          </button>
+        ))}
+      </div>
+      <div className="decision-tools">
+        <button className="btn small ghost" disabled={suggesting} onClick={askAI}>
+          {suggesting ? "AI 思考中……" : "让 AI 给建议"}
+        </button>
+        {suggestion && suggestion.reason && <p className="hint">AI 理由:{suggestion.reason}</p>}
+      </div>
+    </section>
+  );
+}
 
 function msLeft(endsAt) {
   if (!endsAt) return "未计时";
@@ -13,6 +67,7 @@ function msLeft(endsAt) {
 export function StorytellerConsole({ view, chat, session, onLeave }) {
   const [selectedSeat, setSelectedSeat] = useState(view.seats[0]?.seat ?? 0);
   const [infoText, setInfoText] = useState("");
+  const [autopilot, setAutopilot] = useState(!!session.storytellerAutopilot);
   const selected = useMemo(
     () => view.seats.find((s) => s.seat === selectedSeat) || view.seats[0],
     [view.seats, selectedSeat]
@@ -34,8 +89,29 @@ export function StorytellerConsole({ view, chat, session, onLeave }) {
       <header className="game-header storyteller-header">
         <button className="link-btn" onClick={onLeave}><Icon name="back" /> 离开</button>
         <div className="phase-banner"><Icon name="storyteller" size={22} /><span>说书人 · {view.scriptName}</span></div>
+        <label className="autopilot-toggle" title="开启后,所有裁量决策由 AI 说书人自动应答">
+          <input
+            type="checkbox"
+            checked={autopilot}
+            onChange={(e) => {
+              const enabled = session.setStorytellerAutopilot
+                ? session.setStorytellerAutopilot(e.target.checked)
+                : false;
+              setAutopilot(enabled);
+            }}
+          />
+          <span>AI 托管裁定</span>
+        </label>
         <span className="room-code small">第 {view.night} 夜 / 第 {view.day} 天</span>
       </header>
+
+      {view.pendingStorytellerDecision && !autopilot && (
+        <PendingDecisionPanel
+          decision={view.pendingStorytellerDecision}
+          session={session}
+          act={act}
+        />
+      )}
 
       <main className="storyteller-grid">
         <section className="story-panel grimoire-panel">

@@ -9,7 +9,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      __LLM_CONFIGURED__: JSON.stringify(Boolean(minimaxKey))
+      // 本地有 key(开发代理注入)或显式指向已部署的生产代理(如 Cloudflare Worker)都视为已配置
+      __LLM_CONFIGURED__: JSON.stringify(Boolean(minimaxKey) || Boolean(env.VITE_MINIMAX_ENDPOINT))
     },
     server: {
       port: 5173,

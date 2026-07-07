@@ -7,8 +7,9 @@ export function ChatPanel({ view, chat, session }) {
   const [text, setText] = useState("");
   const [whisperTo, setWhisperTo] = useState(null);
   const scrollRef = useRef(null);
+  const isSpectator = view.isSpectator || view.type === "spectator";
 
-  const whisperMsgs = chat.filter((c) => c.to != null);
+  const whisperMsgs = isSpectator ? [] : chat.filter((c) => c.to != null);
   const publicMsgs = chat.filter((c) => c.to == null);
 
   useEffect(() => {
@@ -17,7 +18,7 @@ export function ChatPanel({ view, chat, session }) {
 
   const send = () => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || isSpectator) return;
     const to = tab === "whisper" ? whisperTo : null;
     if (tab === "whisper" && to == null) return;
     const res = session.sendChat(t, to);
@@ -25,16 +26,16 @@ export function ChatPanel({ view, chat, session }) {
     setText("");
   };
 
-  const canChat = view.phase !== "night";
-  const others = view.seats.filter((s) => s.seat !== view.seat);
+  const canChat = !isSpectator && view.phase !== "night";
+  const others = isSpectator ? [] : view.seats.filter((s) => s.seat !== view.seat);
 
   return (
     <div className="chat-panel">
       <div className="chat-tabs">
         <button className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}><Icon name="chat" /> 广场</button>
-        <button className={tab === "whisper" ? "active" : ""} onClick={() => setTab("whisper")}>
+        {!isSpectator && <button className={tab === "whisper" ? "active" : ""} onClick={() => setTab("whisper")}>
           <Icon name="whisper" /> 私聊{whisperMsgs.length ? ` (${whisperMsgs.length})` : ""}
-        </button>
+        </button>}
         <button className={tab === "log" ? "active" : ""} onClick={() => setTab("log")}><Icon name="log" /> 事件</button>
       </div>
 
@@ -65,7 +66,7 @@ export function ChatPanel({ view, chat, session }) {
           ))}
       </div>
 
-      {tab === "whisper" && (
+      {tab === "whisper" && !isSpectator && (
         <select
           className="whisper-select"
           value={whisperTo == null ? "" : whisperTo}
@@ -80,7 +81,7 @@ export function ChatPanel({ view, chat, session }) {
         </select>
       )}
 
-      {tab !== "log" && (
+      {tab !== "log" && !isSpectator && (
         <div className="chat-input-row">
           <input
             value={text}

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { TownSquare } from "../components/TownSquare.jsx";
 import { RoleCard } from "../components/RoleCard.jsx";
 import { ChatPanel } from "../components/ChatPanel.jsx";
@@ -108,6 +108,7 @@ export function GameScreen({ session, onLeave }) {
     return <StorytellerConsole view={view} chat={chat} session={session} onLeave={onLeave} />;
   }
 
+  const isSpectator = view.isSpectator || view.type === "spectator";
   const isNight = view.phase === "night";
   const phaseText =
     view.phase === "night"
@@ -124,17 +125,21 @@ export function GameScreen({ session, onLeave }) {
           <span className="phase-icon"><Icon name={isNight ? "night" : view.phase === "end" ? "end" : "day"} size={22} /></span>
           <span>{phaseText}</span>
         </div>
+        {view.storytellerDeciding && (
+          <span className="st-deciding">说书人正在裁定……</span>
+        )}
+        {isSpectator && <span className="room-code small">观战中</span>}
         {session.mode !== "single" && <span className="room-code small">房间 {session.code}</span>}
       </header>
 
       <div className="game-body">
         <aside className="left-panel">
-          <RoleCard view={view} />
+          {isSpectator ? <SpectatorCard view={view} /> : <RoleCard view={view} />}
         </aside>
 
         <main className="center-panel">
           {view.currentVote && (
-            <VoteBanner view={view} onVote={(up) => session.vote(up)} />
+            <VoteBanner view={view} onVote={(up) => !isSpectator && session.vote(up)} />
           )}
           <TownSquare
             view={view}
@@ -142,14 +147,16 @@ export function GameScreen({ session, onLeave }) {
             picked={select ? select.picked : []}
             onSeatClick={onSeatClick}
           />
-          <ActionBar
-            view={view}
-            session={session}
-            select={select}
-            setSelect={setSelect}
-            confirmSelection={confirmSelection}
-            showToast={showToast}
-          />
+          {!isSpectator && (
+            <ActionBar
+              view={view}
+              session={session}
+              select={select}
+              setSelect={setSelect}
+              confirmSelection={confirmSelection}
+              showToast={showToast}
+            />
+          )}
         </main>
 
         <aside className="right-panel">
@@ -157,17 +164,34 @@ export function GameScreen({ session, onLeave }) {
         </aside>
       </div>
 
-      {isNight && <NightPanel view={view} select={select} confirm={confirmSelection} />}
+      {!isSpectator && isNight && <NightPanel view={view} select={select} confirm={confirmSelection} />}
       {view.phase === "end" && <EndOverlay view={view} onLeave={onLeave} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
 
+function SpectatorCard({ view }) {
+  const alive = view.seats.filter((s) => s.alive).length;
+  return (
+    <div className="role-card-wrap">
+      <div className="role-card team-townsfolk">
+        <div className="role-symbol"><Icon name="storyteller" size={52} /></div>
+        <div className="role-meta">
+          <h3>观战视角</h3>
+          <span className="role-team">公开信息 · {view.scriptName}</span>
+        </div>
+        <p className="role-ability">你可以查看公开广场、投票进度和公开日志，但不能发言、私聊或执行行动。</p>
+        <p className="hint">存活 {alive}/{view.seats.length} · 第 {view.phase === "night" ? view.night + " 夜" : view.day + " 天"}</p>
+      </div>
+    </div>
+  );
+}
 /** 白天操作按钮区 */
 function ActionBar({ view, session, select, setSelect, confirmSelection, showToast }) {
   if (view.phase !== "day") return null;
 
+  const seats = Array.isArray(view.seats) ? view.seats : [];
   const inSelection = select && select.mode !== "night";
 
   if (view.dayStage === "voting") {

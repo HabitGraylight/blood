@@ -1,4 +1,4 @@
-﻿import { GameCore, AI_PERSONAS } from "./gameCore.js";
+import { GameCore, AI_PERSONAS } from "./gameCore.js";
 import { ensureAuth, roomRef, fb, makeRoomCode } from "./firebase.js";
 import { createRng, randomSeed } from "../core/rng.js";
 
@@ -297,6 +297,13 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     this._notify();
 
     const updates = {};
+    updates["views/_spectator"] = {
+      roomCode: this.code,
+      gameId: this.gameId,
+      view: stampView(this.core.getSpectatorView(), this.code, this.gameId),
+      chat: this.core.getPublicChat().slice(-VIEW_CHAT_LIMIT),
+      rev: Date.now()
+    };
     for (const p of this.core.state.players) {
       if (!p.isHuman || p.id === this.uid) continue;
       const view = stampView(this.core.getViewFor(p.id), this.code, this.gameId);
@@ -345,6 +352,20 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     return this.core ? this.core.dispatchStoryteller(action) : { ok: false, error: "游戏尚未开始" };
   }
 
+  /** AI 说书人为当前待裁定事项给出建议(不执行) */
+  suggestDecision() {
+    return this.core ? this.core.suggestDecision() : Promise.resolve(null);
+  }
+
+  /** 切换 AI 托管裁定(自动应答所有待裁定事项) */
+  setStorytellerAutopilot(enabled) {
+    return this.core ? this.core.setStorytellerAutopilot(enabled) : false;
+  }
+
+  get storytellerAutopilot() {
+    return this.core ? this.core.stAutopilot : false;
+  }
+
   leave() {
     if (this.core) this.core.dispose();
     fb.remove(roomRef(this.code)).catch(() => {});
@@ -360,7 +381,17 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     const upper = code.toUpperCase().trim();
     const metaSnap = await fb.get(roomRef(upper, "meta"));
     if (!metaSnap.exists()) throw new Error("房间不存在");
-    if ((metaSnap.val().status || "lobby") !== "lobby") throw new Error("游戏已开始,无法加入");
+    const meta = metaSnap.val() || {};
+    if ((meta.status || "lobby") !== "lobby") {
+      const session = new FirebaseGuestSession(upper, uid, playerName, { spectator: true });
+      session.status = meta.status || "playing";
+      session.scriptId = meta.scriptId || session.scriptId;
+      session.storytellerName = meta.storytellerName || session.storytellerName;
+      session.gameId = meta.gameId || null;
+      session._persistResume();
+      session._init();
+      return session;
+    }
 
     await fb.remove(roomRef(upper, "views", uid));
     await fb.set(roomRef(upper, "lobby", uid), {
@@ -370,7 +401,6 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       order: Date.now()
     });
     const session = new FirebaseGuestSession(upper, uid, playerName);
-    const meta = metaSnap.val() || {};
     session.scriptId = meta.scriptId || session.scriptId;
     session.storytellerName = meta.storytellerName || session.storytellerName;
     session.gameId = meta.gameId || null;
@@ -395,7 +425,9 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       }
       finalMeta = metaSnap.val() || {};
     }
-    const session = new FirebaseGuestSession(saved.code, finalUid, saved.name || "玩家");
+    const session = new FirebaseGuestSession(saved.code, finalUid, saved.name || "玩家", {
+      spectator: saved.mode === "multi-spectator"
+    });
     session.status = finalMeta.status || "lobby";
     session.scriptId = finalMeta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = finalMeta.storytellerName || "说书人";
@@ -405,15 +437,16 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     return session;
   }
 
-  constructor(code, uid, name) {
+  constructor(code, uid, name, options = {}) {
     super(code, uid, name);
     this.isHost = false;
-    this.mode = "multi-guest";
+    this.isSpectator = !!options.spectator;
+    this.mode = this.isSpectator ? "multi-spectator" : "multi-guest";
   }
 
   _init() {
     this._watchLobbyAndMeta();
-    this._watch(roomRef(this.code, "views", this.uid), (snap) => {
+    this._watch(roomRef(this.code, "views", this.isSpectator ? "_spectator" : this.uid), (snap) => {
       const data = snap.val();
       if (!data) return;
       if (!isFreshPayload(data, this.code, this.gameId)) {
@@ -434,18 +467,23 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
   }
 
   sendChat(text, toSeat = null) {
+    if (this.isSpectator) return { ok: false, error: "观众不能参与发言" };
     return this._pushAction({ kind: "chat", text, toSeat: toSeat == null ? null : toSeat });
   }
   nightAction(targets) {
+    if (this.isSpectator) return { ok: false, error: "观众不能行动" };
     return this._pushAction({ kind: "action", action: { type: "nightAction", targets } });
   }
   nominate(nominee) {
+    if (this.isSpectator) return { ok: false, error: "观众不能提名" };
     return this._pushAction({ kind: "action", action: { type: "nominate", nominee } });
   }
   vote(up) {
+    if (this.isSpectator) return { ok: false, error: "观众不能投票" };
     return this._pushAction({ kind: "action", action: { type: "vote", up } });
   }
   slayerShot(target) {
+    if (this.isSpectator) return { ok: false, error: "观众不能使用玩家能力" };
     return this._pushAction({ kind: "action", action: { type: "slayerShot", target } });
   }
   endDay() {
@@ -453,7 +491,7 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
   }
 
   leave() {
-    fb.remove(roomRef(this.code, "lobby", this.uid)).catch(() => {});
+    if (!this.isSpectator) fb.remove(roomRef(this.code, "lobby", this.uid)).catch(() => {});
     super.leave();
   }
 }

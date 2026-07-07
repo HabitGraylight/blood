@@ -4,37 +4,65 @@
  * 配置了 LLM 时用大模型推理;否则回退到启发式策略,保证离线可玩。
  * LLM 调用失败也会静默回退,游戏永远不会卡死。
  */
-import { chatComplete, extractJSON, isLLMConfigured } from "./llm.js";
+import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier } from "./llm.js";
 import {
   buildSystemPrompt, nightActionPrompt, speechPrompt,
-  nominationPrompt, votePrompt, whisperPrompt
+  nominationPrompt, votePrompt, whisperPrompt, memoPrompt
 } from "./prompts.js";
-import { roleName } from "../core/data/roles.js";
+import { roleName } from "../scripts/trouble-brewing.js";
+
+const DEFAULT_TRAITS = { aggr: 0.5, talk: 0.5 };
 
 export class AIPlayer {
-  constructor(seat, persona, rng) {
+  constructor(seat, persona, rng, opts = {}) {
     this.seat = seat;
     this.persona = persona;
     this.rng = rng;
-    this.suspicion = {}; // seat -> 分数,启发式用
+    // 数值化人格特征:aggr 激进度(提名/推票倾向),talk 多话度;启发式路径也用
+    this.traits = { ...DEFAULT_TRAITS, ...(opts.traits || {}) };
+    // 跨回合长期记忆 { summary, updatedDay },每个白天结束后浓缩更新
+    this.memo = opts.memo || null;
   }
 
   /* ---------------- LLM 封装 ---------------- */
 
   async _ask(view, userPrompt, options = {}) {
     if (!isLLMConfigured()) return null;
+    const messages = [
+      { role: "system", content: buildSystemPrompt(view, this.persona, this.memo) },
+      { role: "user", content: userPrompt }
+    ];
     try {
-      const text = await chatComplete(
-        [
-          { role: "system", content: buildSystemPrompt(view, this.persona) },
-          { role: "user", content: userPrompt }
-        ],
-        options
-      );
-      return extractJSON(text);
+      let text = await chatComplete(messages, options);
+      let parsed = extractJSON(text);
+      if (!parsed) {
+        // 解析失败重试一次:附上原回复,低温度要求纯 JSON
+        text = await chatComplete(
+          [
+            ...messages,
+            { role: "assistant", content: String(text).slice(0, 400) },
+            { role: "user", content: "你的回复无法解析。只输出一个 JSON 对象,不要输出任何其他文字。" }
+          ],
+          { ...options, temperature: 0.3 }
+        );
+        parsed = extractJSON(text);
+      }
+      return parsed;
     } catch (err) {
       console.warn(`AI(${this.seat}) LLM 调用失败,回退启发式:`, err.message);
       return null;
+    }
+  }
+
+  /** 白天结束后更新长期记忆(LLM 不可用或低预算档时静默跳过) */
+  async updateMemo(view, chatHistory) {
+    if (llmBudgetTier() === "low") return;
+    const result = await this._ask(view, memoPrompt(view, chatHistory, this.memo), {
+      maxTokens: 250,
+      temperature: 0.4
+    });
+    if (result && typeof result.memo === "string" && result.memo.trim()) {
+      this.memo = { summary: result.memo.trim().slice(0, 400), updatedDay: view.day };
     }
   }
 
@@ -78,7 +106,7 @@ export class AIPlayer {
 
   async decideNightAction(view) {
     const pa = view.pendingAction;
-    const result = await this._ask(view, nightActionPrompt(view, pa));
+    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6 });
     if (result && Array.isArray(result.targets)) {
       const targets = result.targets
         .map(Number)
@@ -161,7 +189,7 @@ export class AIPlayer {
       .map((s) => s.seat);
     if (!candidates.length) return null;
 
-    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates));
+    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.6 });
     if (result !== null && "nominate" in result) {
       const n = result.nominate;
       if (n === null) return null;
@@ -172,8 +200,8 @@ export class AIPlayer {
   }
 
   _heuristicNomination(view, candidates) {
-    // 大多数时候不主动提名,避免刷屏
-    if (!this.rng.chance(0.4)) return null;
+    // 提名倾向随人格激进度浮动,避免千人一面
+    if (!this.rng.chance(0.15 + 0.5 * this.traits.aggr)) return null;
     const team = this._evilTeamSeats(view);
     const pool = this._isEvil(view)
       ? candidates.filter((s) => !team.has(s))
@@ -187,9 +215,20 @@ export class AIPlayer {
   async decideVote(view, chatHistory) {
     const cv = view.currentVote;
     if (!cv) return false;
-    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200 });
+    // 低预算档:普通投票走启发式,只有关键投票才消耗 LLM 调用
+    if (llmBudgetTier() === "low" && !this._isCriticalVote(view, cv)) {
+      return this._heuristicVote(view, cv);
+    }
+    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200, temperature: 0.55 });
     if (result && typeof result.vote === "boolean") return result.vote;
     return this._heuristicVote(view, cv);
+  }
+
+  /** 关键投票:被提名的是自己/队友,或已到残局 */
+  _isCriticalVote(view, cv) {
+    if (cv.nominee === this.seat) return true;
+    if (this._evilTeamSeats(view).has(cv.nominee)) return true;
+    return view.seats.filter((s) => s.alive).length <= 4;
   }
 
   _heuristicVote(view, cv) {
@@ -198,11 +237,11 @@ export class AIPlayer {
     if (this._isEvil(view)) {
       // 邪恶:压票保队友(偶尔卖队友做戏),推票处决好人
       if (team.has(cv.nominee)) return this.rng.chance(0.12);
-      return this.rng.chance(0.7);
+      return this.rng.chance(0.5 + 0.4 * this.traits.aggr);
     }
     // 死人省着用遗书票
     if (!view.you.alive) return this.rng.chance(0.25);
-    return this.rng.chance(0.5);
+    return this.rng.chance(0.3 + 0.4 * this.traits.aggr);
   }
 
   /* ---------------- 私聊回复 ---------------- */
