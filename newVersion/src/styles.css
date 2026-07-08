@@ -353,9 +353,10 @@ textarea { resize: vertical; }
   background: rgba(9, 7, 12, 0.88);
 }
 .phase-banner {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-width: 0;
   font-size: 1.05rem; font-family: var(--font-display);
-  color: var(--gold-bright); letter-spacing: 0.22em;
+  color: var(--gold-bright); letter-spacing: 0.12em;
 }
 .phase-banner::before, .phase-banner::after {
   content: "";
@@ -363,7 +364,32 @@ textarea { resize: vertical; }
   background: linear-gradient(90deg, transparent, var(--hairline-strong));
 }
 .phase-banner::after { background: linear-gradient(90deg, var(--hairline-strong), transparent); }
-.phase-icon { display: inline-flex; color: var(--gold); }
+.phase-icon { display: inline-flex; color: var(--gold); flex: 0 0 auto; }
+.phase-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  line-height: 1.18;
+  text-align: center;
+}
+.phase-text > span {
+  max-width: min(48vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.phase-text small {
+  max-width: min(54vw, 480px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+}
 .st-deciding { font-size: 0.8rem; color: var(--ink-dim); letter-spacing: 0.06em; }
 
 .game-body {
@@ -1552,7 +1578,10 @@ select option:disabled { color: var(--ink-faint); }
     min-height: 360px;
   }
   .phase-banner::before, .phase-banner::after { width: 16px; }
+  .phase-text > span { max-width: 52vw; }
+  .phase-text small { max-width: 58vw; }
 }
+
 @media (max-width: 860px) {
   .auth-page { grid-template-columns: 1fr; padding: 22px; }
   .auth-stage { min-height: 190px; }
@@ -1561,6 +1590,10 @@ select option:disabled { color: var(--ink-faint); }
   .account-pill { top: 12px; right: 12px; }
 }
 @media (max-width: 720px) {
+  .game-header { flex-wrap: wrap; justify-content: center; }
+  .game-header .link-btn { order: 1; }
+  .game-header .phase-banner { order: 3; width: 100%; }
+  .game-header .room-code, .game-header .st-deciding { order: 2; }
   .profile-page { padding: 72px 14px 18px; }
   .profile-hero { grid-template-columns: 1fr; text-align: center; justify-items: center; }
   .profile-stats { grid-template-columns: 1fr; }

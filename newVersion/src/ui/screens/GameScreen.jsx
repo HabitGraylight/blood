@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { TownSquare } from "../components/TownSquare.jsx";
 import { RoleCard } from "../components/RoleCard.jsx";
 import { ChatPanel } from "../components/ChatPanel.jsx";
@@ -11,6 +11,42 @@ import { getCurrentUser } from "../../session/firebase.js";
 import { buildPlayerResultFromView, buildReplayFromCore } from "../../session/gameHistory.js";
 import { saveGameReplay, saveUserGameResult } from "../../session/profileStore.js";
 
+function phaseInfoFor(view) {
+  if (view.phase === "night") {
+    return {
+      icon: "night",
+      title: `第 ${view.night} 夜 · 夜晚`,
+      detail: view.pendingAction ? "轮到你行动, 请在广场选择目标" : "等待夜间行动结算"
+    };
+  }
+  if (view.phase === "end") {
+    return { icon: "end", title: "游戏结束", detail: "本局已结算" };
+  }
+
+  const day = `第 ${view.day} 天`;
+  if (view.dayStage === "voting") {
+    return { icon: "day", title: `${day} · 投票中`, detail: "请等待轮到自己表决" };
+  }
+  if (view.dayStage === "nominations") {
+    return {
+      icon: "nominate",
+      title: `${day} · 提名阶段`,
+      detail: view.canNominate ? "现在可以提名存活玩家" : "你今天已提名或暂不可提名"
+    };
+  }
+  if (view.dayStage === "whispers") {
+    return {
+      icon: "chat",
+      title: `${day} · 私聊时间`,
+      detail: view.canNominate ? "可发言、私聊或提名" : "提名尚未开放, 先交换信息"
+    };
+  }
+  return {
+    icon: "day",
+    title: `${day} · 公开讨论`,
+    detail: view.canNominate ? "可发言或提名" : "提名尚未开放, 等待说书人推进"
+  };
+}
 /**
  * 游戏主界面。所有数据来自 session.getView()(玩家视角投影),
  * 单机与联机共用,不接触引擎内部状态。 */
@@ -148,20 +184,18 @@ export function GameScreen({ session, onLeave }) {
 
   const isSpectator = view.isSpectator || view.type === "spectator";
   const isNight = view.phase === "night";
-  const phaseText =
-    view.phase === "night"
-      ? "第 " + view.night + " 夜"
-      : view.phase === "end"
-        ? "游戏结束"
-        : "第 " + view.day + " 天" + (view.dayStage === "voting" ? " · 投票中" : "");
+  const phaseInfo = phaseInfoFor(view);
 
   return (
     <div className={"game " + (isNight ? "night-mode" : "")}>
       <header className="game-header">
         <button className="link-btn" onClick={onLeave}><Icon name="back" /> 离开</button>
-        <div className="phase-banner">
-          <span className="phase-icon"><Icon name={isNight ? "night" : view.phase === "end" ? "end" : "day"} size={22} /></span>
-          <span>{phaseText}</span>
+        <div className="phase-banner" title={phaseInfo.detail}>
+          <span className="phase-icon"><Icon name={phaseInfo.icon} size={22} /></span>
+          <span className="phase-text">
+            <span>{phaseInfo.title}</span>
+            <small>{phaseInfo.detail}</small>
+          </span>
         </div>
         {view.storytellerDeciding && (
           <span className="st-deciding">说书人正在裁定...</span>
