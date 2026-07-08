@@ -9,7 +9,7 @@ function makeGameId() {
 }
 
 export class LocalSession {
-  constructor({ playerName, playerCount, scriptId, seed, snapshot, aiStoryteller = true } = {}) {
+  constructor({ playerName, playerCount, scriptId, seed, snapshot, aiStoryteller = true, avatar = null } = {}) {
     this.listeners = new Set();
     this.isHost = true;
     this.mode = "single";
@@ -45,6 +45,7 @@ export class LocalSession {
       id: HUMAN_ID,
       name: this.playerName,
       isHuman: true,
+      avatar: avatar || null,
       persona: null
     });
 

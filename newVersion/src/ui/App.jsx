@@ -119,10 +119,13 @@ export function App() {
   }, [session, navigate]);
 
   const startSingle = useCallback((playerName, playerCount, scriptId, aiStoryteller = true) => {
-    const s = new LocalSession({ playerName, playerCount, scriptId, aiStoryteller });
+    const s = new LocalSession({
+      playerName, playerCount, scriptId, aiStoryteller,
+      avatar: authUser?.photoURL || null
+    });
     setSession(s);
     navigate("game");
-  }, [navigate]);
+  }, [navigate, authUser]);
 
   const enterRoom = useCallback((s) => {
     setSession(s);

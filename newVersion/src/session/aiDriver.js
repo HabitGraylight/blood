@@ -35,7 +35,13 @@ export class AIDriver {
     this.scheduled = new Set(); // 已调度任务的 key
     this.dayPlan = null; // { day, night, queue, nomQueue, reactBudget, busy }
     this.lastMsgLen = 0; // 上一条聊天消息长度,用于计算"阅读时间"
+    this.lastActivityAt = Date.now(); // 最近一次玩家活动(聊天/提名/投票),用于说书人推进节奏
     this.disposed = false;
+  }
+
+  /** 有玩家活动(聊天/提名/投票等)时调用,说书人会等场面安静后再推进阶段 */
+  noteActivity() {
+    this.lastActivityAt = Date.now();
   }
 
   dispose() {
@@ -64,6 +70,7 @@ export class AIDriver {
   /** 发消息并记录长度(驱动后续节奏) */
   _say(seat, text, toSeat = null) {
     this.lastMsgLen = text.length;
+    this.noteActivity();
     return this.pushChat(seat, text, toSeat);
   }
 
@@ -76,8 +83,28 @@ export class AIDriver {
     if (this.disposed || this.engine.state.winner) return;
     const res = this.engine.dispatch(action);
     if (!res.ok) console.warn("AI 动作被拒绝:", action, res.error);
+    if (["nominate", "vote", "slayerShot"].includes(action.type)) this.noteActivity();
     this.onChange();
     this.tick();
+  }
+
+  /**
+   * 说书人推进阶段前的等待:至少等 minMs,且最近 quietMs 内无人活动才放行;
+   * 超过 maxMs 强制放行(说书人有责任推动游戏,不能无限拖延)。
+   * valid() 返回 false 时中止等待(阶段已被其他事件推进)。
+   */
+  async _waitForLull({ minMs, quietMs, maxMs, valid }) {
+    const start = Date.now();
+    this.noteActivity(); // 从现在开始计静默,而不是沿用旧时间戳
+    while (!this.disposed) {
+      if (valid && !valid()) return false;
+      const now = Date.now();
+      const quietEnough = quietMs <= 0 || now - this.lastActivityAt >= quietMs;
+      if (now - start >= minMs && quietEnough) return true;
+      if (now - start >= maxMs) return true;
+      await delay(1500);
+    }
+    return false;
   }
 
   /** 每次状态变化后调用,推进 AI 行动 */
@@ -297,7 +324,10 @@ export class AIDriver {
       return;
     }
 
-    if (plan.nomQueue.length) {
+    // 有说书人主持时(人类或 AI),AI 玩家等到说书人开放提名后才考虑提名,
+    // 避免讨论阶段就抢跑、投票结束后阶段被悄悄推进导致提前入夜
+    const hasModerator = s.storytellerMode !== "auto";
+    if (plan.nomQueue.length && (!hasModerator || s.dayStage === "nominations")) {
       const seat = plan.nomQueue.shift();
       plan.busy = true;
       (async () => {
@@ -331,27 +361,45 @@ export class AIDriver {
     const storyteller = this.getStoryteller();
 
     if (storyteller) {
-      // AI 说书人控制节奏:讨论 → 开放提名(留出真人操作窗口) → 宣布黄昏
+      // AI 说书人控制节奏:讨论 → 开放提名(留出真人操作窗口) → 宣布黄昏。
+      // 每一步都等场面安静(玩家持续聊天/操作会自动延长),避免打断进行中的讨论。
       if (s.dayStage === "discussion" || s.dayStage === "whispers") {
         this._once(`st:open-nom:${s.night}:${s.day}`, async () => {
-          await delay(humansAlive ? 20000 : 3000);
-          if (this.disposed) return;
+          const proceed = await this._waitForLull({
+            minMs: humansAlive ? 45000 : 3000,
+            quietMs: humansAlive ? 18000 : 0,
+            maxMs: humansAlive ? 240000 : 8000,
+            valid: () => {
+              const st = this.engine.state;
+              return st.phase === "day" && st.day === s.day && !st.winner &&
+                ["discussion", "whispers"].includes(st.dayStage);
+            }
+          });
+          if (!proceed || this.disposed) return;
           const st = this.engine.state;
           if (st.phase === "day" && ["discussion", "whispers"].includes(st.dayStage) && st.day === s.day && !st.pendingStorytellerDecision) {
             this._dispatch({
               type: "storytellerAdvancePhase",
               stage: "nominations",
-              durationMs: humansAlive ? 60000 : 6000
+              durationMs: humansAlive ? 90000 : 6000
             });
             this._narrateTemplate(`narrate:open-nom:${s.night}:${s.day}`, { kind: "nominations-open" });
           }
         });
       } else if (s.dayStage === "nominations") {
         this._once(`st:dusk:${s.night}:${s.day}`, async () => {
-          await delay(humansAlive ? 60000 : 5000);
+          await this._waitForLull({
+            minMs: humansAlive ? 90000 : 5000,
+            quietMs: humansAlive ? 20000 : 0,
+            maxMs: humansAlive ? 300000 : 15000,
+            valid: () => {
+              const st = this.engine.state;
+              return st.phase === "day" && st.day === s.day && !st.winner;
+            }
+          });
           // 等待进行中的投票/裁定结束再宣布黄昏
           let guard = 0;
-          while (!this.disposed && guard++ < 120) {
+          while (!this.disposed && guard++ < 200) {
             const st = this.engine.state;
             if (st.phase !== "day" || st.day !== s.day || st.winner) return;
             if (st.dayStage !== "voting" && !st.pendingStorytellerDecision) break;
@@ -367,8 +415,9 @@ export class AIDriver {
       return;
     }
 
-    // 无说书人:若存活玩家全是 AI,自动进入黄昏,防止对局卡死
-    if (!humansAlive) {
+    // 全自动模式(无任何说书人):若存活玩家全是 AI,自动进入黄昏,防止对局卡死。
+    // 人类说书人主持时不自动入夜,由控制台的"宣布黄昏"决定。
+    if (!humansAlive && s.storytellerMode === "auto") {
       this._once(`dusk:${s.night}:${s.day}`, async () => {
         await delay(4000);
         if (this.disposed) return;

@@ -83,6 +83,10 @@ export function buildReplayFromCore(core, options = {}) {
       participants[player.id] = true;
     }
   }
+  // 人类说书人也算参与者,确保其有权限查看复盘
+  if (core.storytellerId && !String(core.storytellerId).startsWith("ai-")) {
+    participants[core.storytellerId] = true;
+  }
 
   const players = (state.players || []).map((player) => {
     const role = script.roles[player.role];

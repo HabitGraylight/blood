@@ -272,7 +272,7 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
         >
           <Icon name="slayer" /> 声称杀手        </button>
       ))}
-      {session.isHost && view.canEndDay && (
+      {(session.isHost || view.isStoryteller) && view.canEndDay && (
         <button
           className="btn dusk"
           onClick={() => {

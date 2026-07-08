@@ -62,7 +62,12 @@ export function TownSquare({ view, selectable, picked, onSeatClick }) {
               disabled={!isSelectable}
             >
               <span className="seat-token">
-                {role ? <RoleIcon roleId={s.revealedRole} scriptId={view.scriptId} size={50} /> : <Icon name={s.alive ? (s.isHuman ? "player" : "ai") : "dead"} size={28} />}
+                {role
+                  ? <RoleIcon roleId={s.revealedRole} scriptId={view.scriptId} size={56} />
+                  : s.avatar
+                    ? <img className="seat-avatar" src={s.avatar} alt={`${s.name} 的头像`} />
+                    : <Icon name={s.alive ? (s.isHuman ? "player" : "ai") : "dead"} size={32} />}
+                <span className="seat-number">{logicalSeat + 1}</span>
               </span>
               <span className="seat-name">
                 {s.name || `玩家${idx + 1}`}

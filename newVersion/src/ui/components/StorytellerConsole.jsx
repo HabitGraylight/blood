@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Icon } from "./Icon.jsx";
 import { RoleIcon } from "./RoleIcon.jsx";
 
@@ -68,10 +68,22 @@ export function StorytellerConsole({ view, chat, session, onLeave }) {
   const [selectedSeat, setSelectedSeat] = useState(view.seats[0]?.seat ?? 0);
   const [infoText, setInfoText] = useState("");
   const [autopilot, setAutopilot] = useState(!!session.storytellerAutopilot);
+  const [timelineTab, setTimelineTab] = useState("log"); // log | chat | whisper
+  const [narration, setNarration] = useState("");
+  const timelineRef = useRef(null);
   const selected = useMemo(
     () => view.seats.find((s) => s.seat === selectedSeat) || view.seats[0],
     [view.seats, selectedSeat]
   );
+
+  const allChat = Array.isArray(chat) ? chat : [];
+  const publicMsgs = allChat.filter((c) => c.to == null);
+  const whisperMsgs = allChat.filter((c) => c.to != null);
+  const nameOf = (seat) => view.seats.find((s) => s.seat === seat)?.name ?? `座位${seat + 1}`;
+
+  useEffect(() => {
+    if (timelineRef.current) timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
+  }, [allChat.length, view.log.length, timelineTab]);
 
   const act = (action) => {
     const res = session.storytellerAction ? session.storytellerAction(action) : { ok: false, error: "当前会话没有说书人权限" };
@@ -83,6 +95,17 @@ export function StorytellerConsole({ view, chat, session, onLeave }) {
     const res = act({ type: "storytellerSetInfoOverride", seat: selected.seat, text: infoText.trim() });
     if (res.ok) setInfoText("");
   };
+
+  // 公开旁白:写入所有玩家可见的事件日志(宣布死讯、渲染气氛、引导流程)
+  const sendNarration = () => {
+    const t = narration.trim();
+    if (!t) return;
+    const res = act({ type: "storytellerNarrate", text: t });
+    if (res.ok) setNarration("");
+  };
+
+  const cv = view.currentVote;
+  const votesUp = cv ? Object.values(cv.votes || {}).filter(Boolean).length : 0;
 
   return (
     <div className="storyteller-shell">
@@ -152,8 +175,74 @@ export function StorytellerConsole({ view, chat, session, onLeave }) {
               夜间等待: {view.seats[view.pendingAction.seat]?.name} · {view.pendingAction.prompt}
             </div>
           )}
-          <div className="story-log">
-            {view.log.slice(-80).map((l, i) => <div key={i} className={`log-entry log-${l.type}`}>{l.text}</div>)}
+          {view.phase === "night" && Array.isArray(view.nightQueue) && view.nightQueue.length > 0 && (
+            <div className="night-order">
+              <span className="night-order-title">夜间顺位</span>
+              {view.nightQueue.map((step, i) => (
+                <span
+                  key={`${step.seat}-${i}`}
+                  className={`night-order-step ${i < view.nightIndex ? "done" : ""} ${i === view.nightIndex ? "current" : ""}`}
+                >
+                  {view.seats[step.seat]?.name}
+                </span>
+              ))}
+            </div>
+          )}
+          {cv && (
+            <div className="story-callout vote-callout">
+              投票中: {nameOf(cv.nominator)} 提名 {nameOf(cv.nominee)} ·
+              当前 {votesUp} 票 · 轮到 {nameOf(cv.order[cv.index])} 表决
+              ({cv.index}/{cv.order.length})
+            </div>
+          )}
+          {!cv && view.onBlock && view.onBlock.seat != null && (
+            <div className="story-callout">
+              处决台: {nameOf(view.onBlock.seat)} · {view.onBlock.votes} 票 · 黄昏时将被处决
+            </div>
+          )}
+
+          <div className="chat-tabs story-tabs">
+            <button className={timelineTab === "log" ? "active" : ""} onClick={() => setTimelineTab("log")}>
+              <Icon name="log" /> 事件
+            </button>
+            <button className={timelineTab === "chat" ? "active" : ""} onClick={() => setTimelineTab("chat")}>
+              <Icon name="chat" /> 广场{publicMsgs.length ? ` (${publicMsgs.length})` : ""}
+            </button>
+            <button className={timelineTab === "whisper" ? "active" : ""} onClick={() => setTimelineTab("whisper")}>
+              <Icon name="whisper" /> 私聊{whisperMsgs.length ? ` (${whisperMsgs.length})` : ""}
+            </button>
+          </div>
+          <div className="story-log" ref={timelineRef}>
+            {timelineTab === "log" &&
+              view.log.slice(-120).map((l, i) => <div key={i} className={`log-entry log-${l.type}`}>{l.text}</div>)}
+            {timelineTab === "chat" &&
+              (publicMsgs.length
+                ? publicMsgs.slice(-120).map((c) => (
+                    <div key={c.id} className="msg">
+                      <span className="msg-from">{c.fromName}</span>
+                      <span className="msg-text">{c.text}</span>
+                    </div>
+                  ))
+                : <p className="hint">白天玩家的公开发言会显示在这里。</p>)}
+            {timelineTab === "whisper" &&
+              (whisperMsgs.length
+                ? whisperMsgs.slice(-120).map((c) => (
+                    <div key={c.id} className="msg whisper">
+                      <span className="msg-from">{c.fromName} → {nameOf(c.to)}</span>
+                      <span className="msg-text">{c.text}</span>
+                    </div>
+                  ))
+                : <p className="hint">玩家之间的耳语会显示在这里(仅说书人可见全部)。</p>)}
+          </div>
+          <div className="chat-input-row narration-row">
+            <input
+              value={narration}
+              maxLength={200}
+              placeholder="公开旁白:宣布死讯、渲染气氛、引导流程…"
+              onChange={(e) => setNarration(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && sendNarration()}
+            />
+            <button className="btn small" disabled={!narration.trim()} onClick={sendNarration}>旁白</button>
           </div>
         </section>
 

@@ -1,5 +1,5 @@
 ﻿import { GameCore, AI_PERSONAS } from "./gameCore.js";
-import { ensureAuth, roomRef, fb, makeRoomCode } from "./firebase.js";
+import { ensureAuth, getCurrentUser, roomRef, fb, makeRoomCode } from "./firebase.js";
 import { createRng, randomSeed } from "../core/rng.js";
 import { buildReplayFromCore } from "./gameHistory.js";
 import { saveGameReplay } from "./profileStore.js";
@@ -10,6 +10,15 @@ const HOST_CORE_PREFIX = "botc.firebase.hostCore.";
 
 function makeGameId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 当前登录用户在个人中心设置的头像(未设置时为空串) */
+function myPhotoURL() {
+  try {
+    return getCurrentUser()?.photoURL || "";
+  } catch {
+    return "";
+  }
 }
 
 function saveResume(data) {
@@ -82,6 +91,9 @@ class BaseFirebaseSession {
     this.status = "lobby";
     this.scriptId = "trouble-brewing";
     this.storytellerName = name;
+    this.storytellerUid = uid;
+    this.storytellerMode = "human";
+    this.storytellerPhotoURL = "";
     this.gameId = null;
     this.view = null;
     this.chat = [];
@@ -106,6 +118,7 @@ class BaseFirebaseSession {
       isHost: this.isHost,
       status: this.status,
       scriptId: this.scriptId,
+      storytellerMode: this.storytellerMode,
       gameId: this.gameId
     });
   }
@@ -127,6 +140,9 @@ class BaseFirebaseSession {
       this.status = meta.status || "lobby";
       this.scriptId = meta.scriptId || this.scriptId;
       this.storytellerName = meta.storytellerName || this.storytellerName;
+      this.storytellerUid = meta.storytellerUid || this.storytellerUid;
+      this.storytellerMode = meta.storytellerMode || this.storytellerMode;
+      this.storytellerPhotoURL = meta.storytellerPhotoURL || "";
       this.gameId = nextGameId;
       this.startedAt = meta.startedAt || this.startedAt || null;
       if (gameChanged && !this.isHost) {
@@ -171,6 +187,8 @@ export class FirebaseHostSession extends BaseFirebaseSession {
         hostUid: uid,
         storytellerUid: uid,
         storytellerName: playerName,
+        storytellerMode: "human",
+        storytellerPhotoURL: myPhotoURL(),
         scriptId,
         status: "lobby",
         gameId: null,
@@ -199,12 +217,14 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       return null;
     }
     const meta = metaSnap.val() || {};
-    if (meta.storytellerUid !== uid) return FirebaseGuestSession.resumeSaved(saved, uid, meta);
+    if (meta.hostUid !== uid) return FirebaseGuestSession.resumeSaved(saved, uid, meta);
 
     const session = new FirebaseHostSession(saved.code, uid, saved.name || meta.storytellerName || "说书人");
     session.status = meta.status || "lobby";
     session.scriptId = meta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = meta.storytellerName || session.name;
+    session.storytellerUid = meta.storytellerUid || uid;
+    session.storytellerMode = meta.storytellerMode || "human";
     session.gameId = meta.gameId || saved.gameId || null;
     session.startedAt = meta.startedAt || saved.startedAt || null;
 
@@ -214,8 +234,12 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       session.core = GameCore.hydrate(hostSnapshot.core, () => session._publish(), {
         storytellerId: uid
       });
-      session.mySeat = -1;
-      session.view = stampView(session.core.getStorytellerView(), session.code, session.gameId);
+      const isSt = session.storytellerMode === "human" && session.storytellerUid === uid;
+      session.mySeat = isSt ? -1 : session.core.state.players.findIndex((p) => p.id === uid);
+      session.view = stampView(
+        isSt ? session.core.getStorytellerView() : session.core.getViewFor(uid),
+        session.code, session.gameId
+      );
       session.chat = session.core.getAllChat().slice(-VIEW_CHAT_LIMIT);
     }
 
@@ -231,6 +255,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     this.mode = "multi-host";
     this.core = null;
     this.aiCounter = 0;
+    this.mySeat = -1;
   }
 
   _init() {
@@ -265,6 +290,91 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     await fb.remove(roomRef(this.code, "lobby", playerId));
   }
 
+  /** 房主将说书人职位转让给等待房间中的另一位玩家 */
+  async setStoryteller(newUid, newName, newPhotoURL = "") {
+    if (!this.isHost) return;
+    const oldUid = this.storytellerUid || this.uid;
+    const oldName = this.storytellerName;
+    const oldPhotoURL = this.storytellerPhotoURL || "";
+    const updates = {};
+
+    updates["meta/storytellerUid"] = newUid;
+    updates["meta/storytellerName"] = newName;
+    updates["meta/storytellerMode"] = "human";
+    updates["meta/storytellerPhotoURL"] = newUid === this.uid ? myPhotoURL() : (newPhotoURL || "");
+
+    // 如果新说书人不是房主，将其从 lobby 中移除
+    if (newUid !== this.uid) {
+      updates["lobby/" + newUid] = null;
+    }
+
+    // 旧说书人如果不是房主，将其加回 lobby
+    if (oldUid && oldUid !== this.uid) {
+      updates["lobby/" + oldUid] = {
+        name: oldName,
+        ai: false,
+        role: "player",
+        photoURL: oldPhotoURL,
+        order: Date.now()
+      };
+    }
+
+    // 房主变成普通玩家时，加入 lobby
+    if (newUid !== this.uid && !this.lobby[this.uid]) {
+      updates["lobby/" + this.uid] = {
+        name: this.name,
+        ai: false,
+        role: "player",
+        photoURL: myPhotoURL(),
+        order: Date.now() + 1
+      };
+    }
+
+    // 房主重新成为说书人时，从 lobby 移除
+    if (newUid === this.uid) {
+      updates["lobby/" + this.uid] = null;
+    }
+
+    await fb.update(roomRef(this.code), updates);
+  }
+
+  /** 房主切换为 AI 说书人模式 */
+  async setAIStoryteller() {
+    if (!this.isHost) return;
+    const oldUid = this.storytellerUid || this.uid;
+    const oldName = this.storytellerName;
+    const updates = {};
+
+    updates["meta/storytellerUid"] = "";
+    updates["meta/storytellerName"] = "AI说书人";
+    updates["meta/storytellerMode"] = "ai";
+    updates["meta/storytellerPhotoURL"] = "";
+
+    // 旧说书人如果不是房主，将其加回 lobby
+    if (oldUid && oldUid !== this.uid) {
+      updates["lobby/" + oldUid] = {
+        name: oldName,
+        ai: false,
+        role: "player",
+        photoURL: this.storytellerPhotoURL || "",
+        order: Date.now()
+      };
+    }
+
+    // 房主加入 lobby 作为普通玩家
+    if (!this.lobby[this.uid]) {
+      updates["lobby/" + this.uid] = {
+        name: this.name,
+        ai: false,
+        role: "player",
+        photoURL: myPhotoURL(),
+        order: Date.now() + 1
+      };
+    }
+
+    await fb.update(roomRef(this.code), updates);
+  }
+
   async startGame() {
     const entries = this.getLobbyPlayers();
     if (entries.length < 5 || entries.length > 15) {
@@ -278,14 +388,36 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       id: p.id,
       name: p.name,
       isHuman: !p.ai,
+      avatar: p.photoURL || null,
       persona: p.persona || null
     }));
 
-    this.core = new GameCore(players, () => this._publish(), {
-      scriptId: this.scriptId,
-      storytellerId: this.uid
-    });
-    this.mySeat = -1;
+    const mode = this.storytellerMode || "human";
+    const storytellerIsHost = mode === "human" && this.storytellerUid === this.uid;
+
+    if (storytellerIsHost) {
+      // 模式一: 房主即说书人(当前默认行为)
+      this.core = new GameCore(players, () => this._publish(), {
+        scriptId: this.scriptId,
+        storytellerId: this.uid
+      });
+      this.mySeat = -1;
+    } else if (mode === "ai") {
+      // 模式三: AI 说书人
+      this.core = new GameCore(players, () => this._publish(), {
+        scriptId: this.scriptId,
+        aiStoryteller: true
+      });
+      this.mySeat = this.core.state.players.findIndex((p) => p.id === this.uid);
+    } else {
+      // 模式二: 委托说书人给其他玩家
+      this.core = new GameCore(players, () => this._publish(), {
+        scriptId: this.scriptId,
+        storytellerId: this.storytellerUid
+      });
+      this.mySeat = this.core.state.players.findIndex((p) => p.id === this.uid);
+    }
+
     await fb.update(roomRef(this.code, "meta"), { status: "playing", gameId: this.gameId, startedAt: this.startedAt });
     this._persistResume();
     this.core.start();
@@ -295,10 +427,21 @@ export class FirebaseHostSession extends BaseFirebaseSession {
   _publish() {
     if (!this.core) return;
     saveHostCore(this.code, this.gameId, this.core);
-    this.view = stampView(this.core.getStorytellerView(), this.code, this.gameId);
+
+    const storytellerIsHost = this.storytellerMode === "human" && this.storytellerUid === this.uid;
+    const hasDelegatedSt = this.storytellerMode === "human" && this.storytellerUid && this.storytellerUid !== this.uid;
+
+    if (storytellerIsHost) {
+      // 房主即说书人：本地使用 storytellerView
+      this.view = stampView(this.core.getStorytellerView(), this.code, this.gameId);
+    } else {
+      // 房主是普通玩家：本地使用玩家视角
+      this.view = stampView(this.core.getViewFor(this.uid), this.code, this.gameId);
+    }
     this.chat = this.core.getAllChat().slice(-VIEW_CHAT_LIMIT);
     this._persistResume();
     this._notify();
+    this._saveReplayIfEnded();
 
     const updates = {};
     updates["views/_spectator"] = {
@@ -308,8 +451,22 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       chat: this.core.getPublicChat().slice(-VIEW_CHAT_LIMIT),
       rev: Date.now()
     };
+
+    // 委托说书人模式：发布 storytellerView 到远程说书人
+    if (hasDelegatedSt) {
+      updates[`views/${this.storytellerUid}`] = {
+        roomCode: this.code,
+        gameId: this.gameId,
+        view: stampView(this.core.getStorytellerView(), this.code, this.gameId),
+        chat: this.core.getAllChat().slice(-VIEW_CHAT_LIMIT),
+        rev: Date.now()
+      };
+    }
+
     for (const p of this.core.state.players) {
       if (!p.isHuman || p.id === this.uid) continue;
+      // 委托说书人不发布玩家视图（他们已收到 storytellerView）
+      if (hasDelegatedSt && p.id === this.storytellerUid) continue;
       const view = stampView(this.core.getViewFor(p.id), this.code, this.gameId);
       updates[`views/${p.id}`] = {
         roomCode: this.code,
@@ -350,23 +507,36 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       this.core.chatFrom(a.uid, a.text, a.toSeat == null ? null : a.toSeat);
     } else if (a.kind === "action" && a.action) {
       this.core.dispatchFor(a.uid, a.action, { isHost: a.uid === this.uid });
+    } else if (a.kind === "storytellerAction" && a.action) {
+      // 远程委托说书人发来的说书人操作
+      this.core.dispatchStoryteller(a.action);
     }
   }
 
-  sendChat() {
-    return { ok: false, error: "说书人暂不参与玩家聊天" };
+  sendChat(text, toSeat = null) {
+    if (this.mySeat === -1) return { ok: false, error: "说书人暂不参与玩家聊天" };
+    if (!this.core) return { ok: false, error: "游戏尚未开始" };
+    return this.core.chatFrom(this.uid, text, toSeat);
   }
-  nightAction() {
-    return { ok: false, error: "说书人不能执行玩家夜间行动" };
+  nightAction(targets) {
+    if (this.mySeat === -1) return { ok: false, error: "说书人不能执行玩家夜间行动" };
+    if (!this.core) return { ok: false, error: "游戏尚未开始" };
+    return this.core.dispatchFor(this.uid, { type: "nightAction", targets });
   }
-  nominate() {
-    return { ok: false, error: "说书人不能提名" };
+  nominate(nominee) {
+    if (this.mySeat === -1) return { ok: false, error: "说书人不能提名" };
+    if (!this.core) return { ok: false, error: "游戏尚未开始" };
+    return this.core.dispatchFor(this.uid, { type: "nominate", nominee });
   }
-  vote() {
-    return { ok: false, error: "说书人不能投票" };
+  vote(up) {
+    if (this.mySeat === -1) return { ok: false, error: "说书人不能投票" };
+    if (!this.core) return { ok: false, error: "游戏尚未开始" };
+    return this.core.dispatchFor(this.uid, { type: "vote", up: !!up });
   }
-  slayerShot() {
-    return { ok: false, error: "说书人不能使用玩家能力" };
+  slayerShot(target) {
+    if (this.mySeat === -1) return { ok: false, error: "说书人不能使用玩家能力" };
+    if (!this.core) return { ok: false, error: "游戏尚未开始" };
+    return this.core.dispatchFor(this.uid, { type: "slayerShot", target });
   }
   endDay() {
     return this.core ? this.core.dispatchStoryteller({ type: "endDay" }) : { ok: false, error: "游戏尚未开始" };
@@ -410,6 +580,8 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       session.status = meta.status || "playing";
       session.scriptId = meta.scriptId || session.scriptId;
       session.storytellerName = meta.storytellerName || session.storytellerName;
+      session.storytellerUid = meta.storytellerUid || "";
+      session.storytellerMode = meta.storytellerMode || "human";
       session.gameId = meta.gameId || null;
       session._persistResume();
       session._init();
@@ -421,11 +593,14 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       name: playerName,
       ai: false,
       role: "player",
+      photoURL: myPhotoURL(),
       order: Date.now()
     });
     const session = new FirebaseGuestSession(upper, uid, playerName);
     session.scriptId = meta.scriptId || session.scriptId;
     session.storytellerName = meta.storytellerName || session.storytellerName;
+    session.storytellerUid = meta.storytellerUid || "";
+    session.storytellerMode = meta.storytellerMode || "human";
     session.gameId = meta.gameId || null;
     session._persistResume();
     session._init();
@@ -454,6 +629,8 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     session.status = finalMeta.status || "lobby";
     session.scriptId = finalMeta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = finalMeta.storytellerName || "说书人";
+    session.storytellerUid = finalMeta.storytellerUid || "";
+    session.storytellerMode = finalMeta.storytellerMode || "human";
     session.gameId = finalMeta.gameId || saved.gameId || null;
     session.startedAt = finalMeta.startedAt || saved.startedAt || null;
     session._persistResume();
@@ -511,7 +688,11 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     return this._pushAction({ kind: "action", action: { type: "slayerShot", target } });
   }
   endDay() {
-    return this.core ? this.core.dispatchStoryteller({ type: "endDay" }) : { ok: false, error: "游戏尚未开始" };
+    return this._pushAction({ kind: "storytellerAction", action: { type: "endDay" } });
+  }
+
+  storytellerAction(action) {
+    return this._pushAction({ kind: "storytellerAction", action });
   }
 
   leave() {

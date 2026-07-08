@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       __LLM_CONFIGURED__: JSON.stringify(Boolean(minimaxKey) || Boolean(env.VITE_MINIMAX_ENDPOINT))
     },
     server: {
-      port: 5173,
+      port: Number(process.env.PORT) || 5173,
       proxy: {
         "/api/minimax": {
           target: minimaxBase,

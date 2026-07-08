@@ -77,6 +77,7 @@ export function assignRoles(players, rng, fixedRoles, scriptOrId) {
       id: p.id,
       name: p.name,
       isHuman: !!p.isHuman,
+      avatar: p.avatar || null,
       persona: p.persona || null,
       role: roleId,
       alignment: role.team === TEAM.MINION || role.team === TEAM.DEMON ? "evil" : "good",

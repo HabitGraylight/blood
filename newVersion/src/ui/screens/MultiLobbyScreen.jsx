@@ -57,7 +57,7 @@ export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
             <ScriptSelect scripts={AVAILABLE_SCRIPTS} value={scriptId} onChange={setScriptId} />
           </div>
           <p className="hint">{script.summary}</p>
-          <p className="hint">你将成为独立说书人,不占玩家座位。请保持页面开启。</p>
+          <p className="hint">你将成为房主,可在等待房间中设置说书人(自己/其他玩家/AI)。请保持页面开启。</p>
           <button className="btn primary" disabled={busy} onClick={create}>创建房间</button>
         </div>
         <div className="lobby-block">
