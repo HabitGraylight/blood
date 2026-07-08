@@ -39,10 +39,15 @@ const RULES_BRIEF = `《血染钟楼·暗流涌动》规则要点:
 - 死亡玩家仍可说话,保留最后一次投票机会(遗书票)。
 - 信息可能是假的:中毒、酒鬼、间谍误导、隐士误判、占卜师的红鲱鱼都会制造假信息。`;
 
+/** 对玩家展示的座位号统一为 1 号起(与游戏界面一致);引擎内部仍是 0 起 */
+function seatNo(seat) {
+  return seat + 1;
+}
+
 function seatLine(s) {
   const tags = [];
   if (!s.alive) tags.push(s.ghostVote ? "死亡·有遗书票" : "死亡·无投票权");
-  return `${s.seat}号 ${s.name}${tags.length ? ` (${tags.join(",")})` : ""}`;
+  return `${seatNo(s.seat)}号 ${s.name}${tags.length ? ` (${tags.join(",")})` : ""}`;
 }
 
 /** 按天数给出宏观阶段建议 */
@@ -61,7 +66,7 @@ export function buildSystemPrompt(view, persona, memo = null) {
     "",
     RULES_BRIEF,
     "",
-    `【你的座位】你是 ${view.seat}号玩家「${view.name}」`,
+    `【你的座位】你是 ${seatNo(view.seat)}号玩家「${view.name}」(座位号从1开始,与座位表一致)`,
     `【你的身份】${you.roleName}(${you.teamLabel},${you.alignmentLabel}阵营)`,
     `【你的能力】${you.ability}`,
     you.alive ? "" : "【注意】你已死亡,仍可发言" + (you.ghostVote ? ",还有一次遗书票。" : ",且无法再投票。"),
@@ -74,10 +79,10 @@ export function buildSystemPrompt(view, persona, memo = null) {
 
   if (you.evilInfo) {
     const demon = view.seats[you.evilInfo.demonSeat];
-    const minions = you.evilInfo.minionSeats.map((s) => `${s}号 ${view.seats[s].name}`);
+    const minions = you.evilInfo.minionSeats.map((s) => `${seatNo(s)}号 ${view.seats[s].name}`);
     lines.push(
       "",
-      `【邪恶阵营情报】恶魔是 ${you.evilInfo.demonSeat}号 ${demon.name}` +
+      `【邪恶阵营情报】恶魔是 ${seatNo(you.evilInfo.demonSeat)}号 ${demon.name}` +
         (minions.length ? `;爪牙: ${minions.join("、")}` : "")
     );
     if (you.evilInfo.bluffs && you.evilInfo.bluffs.length) {
@@ -124,8 +129,10 @@ export function buildSituation(view, chatHistory) {
   lines.push("【公开事件】", ...recentLog.map((l) => `- ${l.text}`));
   if (chatHistory && chatHistory.length) {
     lines.push(
-      "【最近发言】",
-      ...chatHistory.slice(-30).map((c) => `${c.fromName}${c.to != null ? "(私聊你)" : ""}: ${c.text}`)
+      "【最近发言】(按时间顺序,最后一条是最新发言;发言人前的编号即其座位号)",
+      ...chatHistory.slice(-30).map(
+        (c) => `${c.fromSeat != null ? `${c.fromSeat + 1}号 ` : ""}${c.fromName}${c.to != null ? "(私聊你)" : ""}: ${c.text}`
+      )
     );
   }
   return lines.join("\n");
@@ -137,7 +144,7 @@ export function nightActionPrompt(view, pendingAction) {
     buildSituation(view, []),
     "",
     `现在是夜晚,轮到你行动:${pendingAction.prompt}。`,
-    `从座位表中选择 ${targets} 名玩家(用座位号)。`,
+    `从座位表中选择 ${targets} 名玩家(使用座位表中的座位号,从1开始)。`,
     `只回复 JSON: {"targets": [座位号${targets === 2 ? ",座位号" : ""}], "reason": "简短理由"}`
   ].join("\n");
 }
@@ -151,7 +158,7 @@ export function nominationPrompt(view, chatHistory, candidates) {
     buildSituation(view, chatHistory),
     "",
     "现在是提名阶段。你可以提名一名存活玩家送上处决台,或选择不提名。",
-    `可提名的座位号: ${candidates.join(", ")}`,
+    `可提名的座位号(从1开始,与座位表一致): ${candidates.map((c) => c + 1).join(", ")}`,
     '只回复 JSON: {"nominate": 座位号或null, "reason": "简短理由"}'
   ].join("\n");
 }
@@ -225,7 +232,7 @@ export function buildGrimoireSituation(stView) {
       if (s.protectedBy != null) marks.push("被僧侣保护");
       if (s.believedRole) marks.push(`酒鬼,自认为是${s.believedRole}`);
       if (s.redHerring) marks.push("红鲱鱼");
-      return `${s.seat}号 ${s.name}: ${s.roleName}(${s.teamLabel},${s.alignmentLabel})${marks.length ? ` [${marks.join(",")}]` : ""}`;
+      return `${s.seat + 1}号 ${s.name}: ${s.roleName}(${s.teamLabel},${s.alignmentLabel})${marks.length ? ` [${marks.join(",")}]` : ""}`;
     })
   ];
   if (stView.onBlock && stView.onBlock.seat != null) {

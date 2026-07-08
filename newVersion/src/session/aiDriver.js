@@ -536,7 +536,14 @@ export class AIDriver {
     const mentioned = [...this.aiPlayers.keys()].filter(
       (seat) => s.players[seat].alive && text.includes(s.players[seat].name)
     );
-    const shouldReply = mentioned.length > 0 || (text.includes("?") || text.includes("?")) && this.rng.chance(0.7);
+    const isQuestion = text.includes("?") || text.includes("?");
+    // 身份声明/信息报告类发言(如"我是占卜师""查了X号")值得被回应,不能被无视
+    const isClaim = /我是|身份|查了|查的|查到|得知|信息|提名|投|恶魔|爪牙|好人|邪恶/.test(text);
+    const shouldReply =
+      mentioned.length > 0 ||
+      (isQuestion && this.rng.chance(0.7)) ||
+      (isClaim && this.rng.chance(0.75)) ||
+      this.rng.chance(0.2);
     if (!shouldReply) return;
     const pool = mentioned.length
       ? mentioned

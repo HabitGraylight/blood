@@ -109,8 +109,9 @@ export class AIPlayer {
     const pa = view.pendingAction;
     const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6 });
     if (result && Array.isArray(result.targets)) {
+      // 提示词中的座位号从 1 开始(与界面一致),转回引擎的 0 起座位
       const targets = result.targets
-        .map(Number)
+        .map((t) => Number(t) - 1)
         .filter((t) => view.seats[t] && (!pa.notSelf || t !== this.seat));
       if (targets.length === pa.targets && new Set(targets).size === targets.length) {
         return targets;
@@ -194,7 +195,9 @@ export class AIPlayer {
     if (result !== null && "nominate" in result) {
       const n = result.nominate;
       if (n === null) return null;
-      if (candidates.includes(Number(n))) return Number(n);
+      // 提示词中的座位号从 1 开始,转回引擎的 0 起座位
+      const seat = Number(n) - 1;
+      if (candidates.includes(seat)) return seat;
       return null;
     }
     return this._heuristicNomination(view, candidates);

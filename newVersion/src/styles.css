@@ -640,7 +640,7 @@ textarea:focus { border-color: var(--gold); }
 }
 .phase-tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; border-bottom: 1px solid var(--panel-border); }
 .story-callout { margin: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(160,49,68,0.18); border: 1px solid rgba(224,105,122,0.35); color: var(--gold-bright); }
-.story-log { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.story-log { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
 .ruling-panel { padding-bottom: 12px; }
 .ruling-panel > .field, .ruling-panel > .btn, .private-review, .selected-player, .ruling-actions { margin-left: 14px; margin-right: 14px; }
 .selected-player { display: flex; gap: 12px; align-items: center; padding: 14px 0 8px; }
