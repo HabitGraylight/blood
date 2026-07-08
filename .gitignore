@@ -1,12 +1,15 @@
 node_modules/
 coverage/
 dist/
+data/
 
 .env
 .env.*
 !.env.example
 
 config/llm.local.json
+oldVersion/config/llm.local.json
+oldVersion/data/
 
 *.log
 .DS_Store
