@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { GameEngine } from "../src/core/engine.js";
 import { drawRoles } from "../src/core/setup.js";
 import { resolveVoteResult, checkWin } from "../src/core/rules.js";
+import { registrationOf } from "../src/core/info.js";
 import { createRng } from "../src/core/rng.js";
 import { ROLES, TEAM, SETUP_TABLE } from "../src/scripts/trouble-brewing.js";
 import { playerView, storytellerView } from "../src/core/view.js";
@@ -56,6 +57,17 @@ describe("发牌与配置表", () => {
     expect(ROLES[drunk.believedRole].team).toBe(TEAM.TOWNSFOLK);
     const inPlay = engine.state.players.map((p) => p.role);
     expect(inPlay).not.toContain(drunk.believedRole);
+  });
+
+  it("间谍注册为外来者时返回外来者角色", () => {
+    const rng = {
+      calls: 0,
+      chance() { return this.calls++ === 0; },
+      pick(pool) { return pool[0]; }
+    };
+    const reg = registrationOf({ role: "spy", alignment: "evil" }, rng);
+    expect(reg.team).toBe(TEAM.OUTSIDER);
+    expect(ROLES[reg.roleId].team).toBe(TEAM.OUTSIDER);
   });
 });
 
@@ -188,6 +200,35 @@ describe("完整对局流程", () => {
       }
     }
     expect(engine.state.players[1].alive).toBe(true);
+  });
+
+  it("僧侣保护小恶魔时小恶魔自杀不会传位", () => {
+    const engine = GameEngine.create(makePlayers(7), {
+      seed: 14,
+      fixedRoles: ["chef", "empath", "monk", "soldier", "poisoner", "scarletwoman", "imp"]
+    });
+    autoNight(engine);
+    engine.dispatch({ type: "endDay" });
+    let guard = 0;
+    while (engine.state.phase === "night" && guard++ < 50) {
+      const pa = engine.state.pendingAction;
+      if (!pa) break;
+      if (pa.roleId === "poisoner") {
+        engine.dispatch({ type: "nightAction", seat: pa.seat, targets: [0] });
+      } else if (pa.roleId === "monk") {
+        engine.dispatch({ type: "nightAction", seat: pa.seat, targets: [6] }); // 保护小恶魔
+      } else if (pa.roleId === "imp") {
+        engine.dispatch({ type: "nightAction", seat: pa.seat, targets: [6] }); // 小恶魔自杀失败
+      } else {
+        const alive = engine.state.players.filter((p) => p.alive && p.seat !== pa.seat);
+        const targets = [];
+        for (let i = 0; i < pa.targets; i++) targets.push(alive[i % alive.length].seat);
+        engine.dispatch({ type: "nightAction", seat: pa.seat, targets });
+      }
+    }
+    expect(engine.state.players[6].alive).toBe(true);
+    expect(engine.state.players[6].role).toBe("imp");
+    expect(engine.state.players[5].role).toBe("scarletwoman");
   });
 
   it("处决圣徒邪恶获胜", () => {
@@ -509,6 +550,26 @@ describe("说书人裁量(决策挂起)", () => {
     expect(engine.state.players[0].alive).toBe(false); // 厨师替死
   });
 
+  it("被僧侣保护的镇长被刀时不触发替死裁量", () => {
+    const engine = humanGame(7, 12, ["chef", "empath", "fortuneteller", "monk", "mayor", "poisoner", "imp"]);
+    runNight(engine, {}, { poisoner: () => [1], monk: () => [1] });
+    engine.dispatch({ type: "endDay" });
+    let mayorDecision = null;
+    runNight(engine, {
+      "mayor-redirect": (d) => {
+        mayorDecision = d;
+        return d.defaultIndex;
+      }
+    }, {
+      poisoner: () => [1],
+      monk: () => [4], // 保护镇长
+      imp: () => [4]
+    });
+    expect(mayorDecision).toBe(null);
+    expect(engine.state.players[4].alive).toBe(true);
+    expect(engine.state.nightKills).not.toContain(4);
+  });
+
   it("恶魔自杀多爪牙时挂起传位裁量", () => {
     const engine = humanGame(7, 13, ["chef", "empath", "fortuneteller", "monk", "poisoner", "scarletwoman", "imp"]);
     runNight(engine, {}, { poisoner: () => [0], monk: () => [0] });
@@ -528,6 +589,7 @@ describe("说书人裁量(决策挂起)", () => {
     // 默认项应指向清醒的猩红夫人
     expect(starPass.options[starPass.defaultIndex].value.seat).toBe(5);
     expect(engine.state.players[4].role).toBe("imp");
+    expect(engine.state.players[0].poisonedBy).toBe(null);
     expect(engine.state.winner).toBe(null);
   });
 

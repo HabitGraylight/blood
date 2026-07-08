@@ -22,8 +22,9 @@ function roleName(script, roleId) {
 export function registrationOf(player, rng, scriptOrId) {
   const script = resolveScript(scriptOrId);
   if (player.role === "spy" && rng.chance(0.75)) {
-    const fakeRole = rng.pick(rolesByTeam(script, TEAM.TOWNSFOLK));
-    return { alignment: "good", team: rng.chance(0.8) ? TEAM.TOWNSFOLK : TEAM.OUTSIDER, roleId: fakeRole.id };
+    const team = rng.chance(0.8) ? TEAM.TOWNSFOLK : TEAM.OUTSIDER;
+    const fakeRole = rng.pick(rolesByTeam(script, team));
+    return { alignment: "good", team, roleId: fakeRole.id };
   }
   if (player.role === "recluse" && rng.chance(0.6)) {
     const team = rng.chance(0.75) ? TEAM.MINION : TEAM.DEMON;

@@ -437,6 +437,7 @@ export class GameEngine {
     this._tell(imp.seat, `你选择了杀死 ${target.name}`, "action");
 
     if (corrupt) return false; // 中毒的恶魔杀不死人
+    if (this._safeFromDemon(target)) return false;
 
     // 自杀传位:一名存活爪牙变成小恶魔(优先猩红夫人)
     if (targetSeat === imp.seat) {
@@ -505,14 +506,22 @@ export class GameEngine {
   /** 恶魔袭击的最终结算(士兵/保护判定) */
   _impKillFinal(targetSeat) {
     const target = this.state.players[targetSeat];
-    if (target.role === "soldier" && !this._isCorrupt(target)) return;
-    if (target.protectedBy != null) return;
+    if (this._safeFromDemon(target)) return;
     if (!target.alive) return; // 死人不能再死
     this._kill(target.seat, "demon");
   }
 
+  _safeFromDemon(target) {
+    if (!target || !target.alive) return true;
+    if (target.role === "soldier" && !this._isCorrupt(target)) return true;
+    return target.protectedBy != null;
+  }
+
   /** 爪牙变身为小恶魔 */
   _makeHeir(heir) {
+    for (const p of this.state.players) {
+      if (p.poisonedBy === heir.seat) p.poisonedBy = null;
+    }
     heir.role = "imp";
     heir.believedRole = null;
     this._tell(heir.seat, "小恶魔死亡,你变成了新的小恶魔!");
