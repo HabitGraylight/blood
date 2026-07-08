@@ -4,12 +4,18 @@ import { createRng, randomSeed } from "../core/rng.js";
 const HUMAN_ID = "human";
 const STORAGE_KEY = "botc.local.session.v1";
 
+function makeGameId() {
+  return `single-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export class LocalSession {
   constructor({ playerName, playerCount, scriptId, seed, snapshot, aiStoryteller = true } = {}) {
     this.listeners = new Set();
     this.isHost = true;
     this.mode = "single";
     this._disposed = false;
+    this.gameId = snapshot?.gameId || makeGameId();
+    this.startedAt = snapshot?.startedAt || Date.now();
 
     if (snapshot?.core) {
       this.scriptId = snapshot.scriptId || snapshot.core.scriptId || "trouble-brewing";
@@ -139,3 +145,4 @@ export class LocalSession {
     this.listeners.clear();
   }
 }
+

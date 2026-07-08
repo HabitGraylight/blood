@@ -1,6 +1,7 @@
 ﻿import React, { useState, useCallback, useEffect } from "react";
 import { AuthScreen } from "./screens/AuthScreen.jsx";
 import { HomeScreen } from "./screens/HomeScreen.jsx";
+import { ProfileScreen } from "./screens/ProfileScreen.jsx";
 import { SingleSetupScreen } from "./screens/SingleSetupScreen.jsx";
 import { MultiLobbyScreen } from "./screens/MultiLobbyScreen.jsx";
 import { RoomScreen } from "./screens/RoomScreen.jsx";
@@ -9,7 +10,7 @@ import { LocalSession } from "../session/localSession.js";
 import { FirebaseHostSession } from "../session/firebaseSession.js";
 import { watchAuth, logout } from "../session/firebase.js";
 
-const VALID_SCREENS = new Set(["home", "single", "multi", "room", "game"]);
+const VALID_SCREENS = new Set(["home", "profile", "single", "multi", "room", "game"]);
 
 function screenFromHash() {
   const raw = window.location.hash.replace(/^#\/?/, "");
@@ -158,9 +159,13 @@ export function App() {
         <HomeScreen
           user={authUser}
           onLogout={handleLogout}
+          onProfile={() => navigate("profile")}
           onSingle={() => navigate("single")}
           onMulti={() => navigate("multi")}
         />
+      )}
+      {screen === "profile" && (
+        <ProfileScreen user={authUser} onBack={goHome} />
       )}
       {screen === "single" && (
         <SingleSetupScreen onStart={startSingle} onBack={goHome} />
@@ -181,3 +186,5 @@ export function App() {
     </div>
   );
 }
+
+

@@ -1,6 +1,7 @@
 ﻿import React, { useState } from "react";
 import { FirebaseHostSession, FirebaseGuestSession } from "../../session/firebaseSession.js";
 import { AVAILABLE_SCRIPTS, DEFAULT_SCRIPT_ID } from "../../scripts/registry.js";
+import { ScriptSelect } from "../components/ScriptSelect.jsx";
 
 export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
   const defaultName = user?.displayName || (user?.email ? user.email.split("@")[0] : "");
@@ -51,14 +52,10 @@ export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
       <div className="lobby-actions">
         <div className="lobby-block">
           <h3>创建房间</h3>
-          <label className="field compact-field">
+          <div className="field compact-field">
             <span>剧本</span>
-            <select value={scriptId} onChange={(e) => setScriptId(e.target.value)}>
-              {AVAILABLE_SCRIPTS.map((s) => (
-                <option key={s.id} value={s.id}>{s.name} · {s.englishName}</option>
-              ))}
-            </select>
-          </label>
+            <ScriptSelect scripts={AVAILABLE_SCRIPTS} value={scriptId} onChange={setScriptId} />
+          </div>
           <p className="hint">{script.summary}</p>
           <p className="hint">你将成为独立说书人,不占玩家座位。请保持页面开启。</p>
           <button className="btn primary" disabled={busy} onClick={create}>创建房间</button>
@@ -80,3 +77,5 @@ export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
     </div>
   );
 }
+
+

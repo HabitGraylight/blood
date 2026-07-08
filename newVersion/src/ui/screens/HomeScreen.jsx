@@ -3,15 +3,19 @@ import { isFirebaseConfigured } from "../../session/firebase.js";
 import { isLLMConfigured } from "../../ai/llm.js";
 import { Icon } from "../components/Icon.jsx";
 
-export function HomeScreen({ user, onSingle, onMulti, onLogout }) {
+export function HomeScreen({ user, onSingle, onMulti, onLogout, onProfile }) {
   const fbReady = isFirebaseConfigured();
   const llmReady = isLLMConfigured();
   const label = user?.displayName || user?.email || "已登录";
+  const initial = label.slice(0, 1).toUpperCase();
 
   return (
     <div className="home">
       <div className="account-pill">
-        <span>{label}</span>
+        <button className="account-profile-btn" onClick={onProfile} title="个人中心">
+          {user?.photoURL ? <img src={user.photoURL} alt="头像" /> : <b>{initial}</b>}
+          <span>个人中心</span>
+        </button>
         <button className="link-btn" onClick={onLogout}>退出</button>
       </div>
 

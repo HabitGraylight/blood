@@ -1,7 +1,27 @@
-{
+﻿{
   "rules": {
     ".read": false,
     ".write": false,
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "userGameResults": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$gameId": {
+          ".write": "auth != null && (auth.uid === $uid || root.child('replays/' + $gameId + '/createdBy').val() === auth.uid)"
+        }
+      }
+    },
+    "replays": {
+      "$gameId": {
+        ".read": "auth != null && (data.child('createdBy').val() === auth.uid || data.child('participants/' + auth.uid).exists())",
+        ".write": "auth != null && ((!data.exists() && newData.child('createdBy').val() === auth.uid) || (data.exists() && data.child('createdBy').val() === auth.uid))"
+      }
+    },
     "rooms": {
       "$code": {
         ".write": "auth != null && (!data.exists() || data.child('meta/hostUid').val() === auth.uid)",

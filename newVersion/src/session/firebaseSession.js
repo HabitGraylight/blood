@@ -1,6 +1,8 @@
-import { GameCore, AI_PERSONAS } from "./gameCore.js";
+﻿import { GameCore, AI_PERSONAS } from "./gameCore.js";
 import { ensureAuth, roomRef, fb, makeRoomCode } from "./firebase.js";
 import { createRng, randomSeed } from "../core/rng.js";
+import { buildReplayFromCore } from "./gameHistory.js";
+import { saveGameReplay } from "./profileStore.js";
 
 const VIEW_CHAT_LIMIT = 200;
 const RESUME_KEY = "botc.firebase.resume.v1";
@@ -45,7 +47,7 @@ function saveHostCore(code, gameId, core) {
       savedAt: Date.now()
     }));
   } catch (error) {
-    console.warn("保存房主权威状态失败:", error);
+    console.warn("保存房主权限状态失败", error);
   }
 }
 
@@ -126,6 +128,7 @@ class BaseFirebaseSession {
       this.scriptId = meta.scriptId || this.scriptId;
       this.storytellerName = meta.storytellerName || this.storytellerName;
       this.gameId = nextGameId;
+      this.startedAt = meta.startedAt || this.startedAt || null;
       if (gameChanged && !this.isHost) {
         this.view = null;
         this.chat = [];
@@ -203,6 +206,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     session.scriptId = meta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = meta.storytellerName || session.name;
     session.gameId = meta.gameId || saved.gameId || null;
+    session.startedAt = meta.startedAt || saved.startedAt || null;
 
     const hostSnapshot = readHostCore(saved.code);
     const snapshotMatches = !session.gameId || hostSnapshot?.gameId === session.gameId;
@@ -282,7 +286,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
       storytellerId: this.uid
     });
     this.mySeat = -1;
-    await fb.update(roomRef(this.code, "meta"), { status: "playing", gameId: this.gameId, startedAt: Date.now() });
+    await fb.update(roomRef(this.code, "meta"), { status: "playing", gameId: this.gameId, startedAt: this.startedAt });
     this._persistResume();
     this.core.start();
     return { ok: true };
@@ -320,6 +324,25 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     }
   }
 
+  _saveReplayIfEnded() {
+    if (!this.core || this.core.state.phase !== "end" || !this.gameId) return;
+    if (this._savedReplayGameId === this.gameId) return;
+    const replay = buildReplayFromCore(this.core, {
+      gameId: this.gameId,
+      createdBy: this.uid,
+      mode: "multi",
+      roomCode: this.code,
+      startedAt: this.startedAt,
+      endedAt: Date.now()
+    });
+    if (!replay) return;
+    this._savedReplayGameId = this.gameId;
+    saveGameReplay(replay).catch((error) => {
+      this._savedReplayGameId = null;
+      console.error("保存对局复盘失败:", error);
+    });
+  }
+
   _handleRemoteAction(a) {
     if (!this.core || !a || !a.uid) return;
     if (this.gameId && a.gameId && a.gameId !== this.gameId) return;
@@ -352,12 +375,12 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     return this.core ? this.core.dispatchStoryteller(action) : { ok: false, error: "游戏尚未开始" };
   }
 
-  /** AI 说书人为当前待裁定事项给出建议(不执行) */
+  /** AI 建议人类为当前待裁定事项给出建议,不执行 */
   suggestDecision() {
     return this.core ? this.core.suggestDecision() : Promise.resolve(null);
   }
 
-  /** 切换 AI 托管裁定(自动应答所有待裁定事项) */
+  /** 切换 AI 说书人托管(自动应答所有待托管项目) */
   setStorytellerAutopilot(enabled) {
     return this.core ? this.core.setStorytellerAutopilot(enabled) : false;
   }
@@ -425,13 +448,14 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       }
       finalMeta = metaSnap.val() || {};
     }
-    const session = new FirebaseGuestSession(saved.code, finalUid, saved.name || "玩家", {
+    const session = new FirebaseGuestSession(saved.code, finalUid, saved.name || "鐜╁", {
       spectator: saved.mode === "multi-spectator"
     });
     session.status = finalMeta.status || "lobby";
     session.scriptId = finalMeta.scriptId || saved.scriptId || "trouble-brewing";
     session.storytellerName = finalMeta.storytellerName || "说书人";
     session.gameId = finalMeta.gameId || saved.gameId || null;
+    session.startedAt = finalMeta.startedAt || saved.startedAt || null;
     session._persistResume();
     session._init();
     return session;
@@ -487,7 +511,7 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     return this._pushAction({ kind: "action", action: { type: "slayerShot", target } });
   }
   endDay() {
-    return { ok: false, error: "只有房主可以宣布黄昏" };
+    return this.core ? this.core.dispatchStoryteller({ type: "endDay" }) : { ok: false, error: "游戏尚未开始" };
   }
 
   leave() {
@@ -495,4 +519,8 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     super.leave();
   }
 }
+
+
+
+
 

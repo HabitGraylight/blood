@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 
 const PATHS = {
   player: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0",
@@ -10,6 +10,8 @@ const PATHS = {
   night: "M18 15.5A7 7 0 0 1 8.5 6 7 7 0 1 0 18 15.5Z",
   end: "M6 4h10l-2 4 2 4H6v8",
   settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v3m0 12v3M4.8 4.8l2.1 2.1m10.2 10.2 2.1 2.1M3 12h3m12 0h3M4.8 19.2l2.1-2.1M17.1 6.9l2.1-2.1",
+  upload: "M12 16V4m0 0 4 4m-4-4-4 4M5 20h14",
+  replay: "M4 7v5h5M5 12a7 7 0 1 0 2-5",
   chat: "M4 5h16v10H8l-4 4V5Z",
   whisper: "M6 11a6 6 0 0 1 12 0v2h1v7H5v-7h1v-2Zm3 2h6v-2a3 3 0 0 0-6 0v2Z",
   log: "M7 4h10v16H7z M9 8h6M9 12h6M9 16h4",
@@ -31,3 +33,4 @@ export function Icon({ name, size = 18, title, className = "" }) {
     </svg>
   );
 }
+

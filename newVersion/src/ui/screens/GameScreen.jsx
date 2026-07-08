@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+﻿import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { TownSquare } from "../components/TownSquare.jsx";
 import { RoleCard } from "../components/RoleCard.jsx";
 import { ChatPanel } from "../components/ChatPanel.jsx";
@@ -7,13 +7,16 @@ import { NightPanel } from "../components/NightPanel.jsx";
 import { EndOverlay } from "../components/EndOverlay.jsx";
 import { StorytellerConsole } from "../components/StorytellerConsole.jsx";
 import { Icon } from "../components/Icon.jsx";
+import { getCurrentUser } from "../../session/firebase.js";
+import { buildPlayerResultFromView, buildReplayFromCore } from "../../session/gameHistory.js";
+import { saveGameReplay, saveUserGameResult } from "../../session/profileStore.js";
 
 /**
  * 游戏主界面。所有数据来自 session.getView()(玩家视角投影),
- * 单机与联机共用,不接触引擎内部状态。
- */
+ * 单机与联机共用,不接触引擎内部状态。 */
 export function GameScreen({ session, onLeave }) {
   const [, force] = useState(0);
+  const savedHistory = useRef(new Set());
   useEffect(() => session.subscribe(() => force((x) => x + 1)), [session]);
 
   // 目标选择模式: null | 'nominate' | 'slayer' | 'night'
@@ -23,6 +26,41 @@ export function GameScreen({ session, onLeave }) {
   const view = session.getView();
   const chat = session.getChat();
   const seats = Array.isArray(view?.seats) ? view.seats : [];
+
+  useEffect(() => {
+    if (!view || view.phase !== "end" || view.isStoryteller || view.isSpectator) return;
+    const gameId = view.gameId || session.gameId;
+    if (!gameId || savedHistory.current.has(gameId)) return;
+    savedHistory.current.add(gameId);
+
+    const persist = async () => {
+      const user = getCurrentUser();
+      if (!user) return;
+      const endedAt = Date.now();
+      if (session.mode === "single" && session.core) {
+        const replay = buildReplayFromCore(session.core, {
+          gameId,
+          createdBy: user.uid,
+          mode: "single",
+          startedAt: session.startedAt,
+          endedAt
+        });
+        if (replay) await saveGameReplay(replay);
+      }
+      const result = buildPlayerResultFromView(view, {
+        gameId,
+        mode: session.mode || "single",
+        roomCode: session.code || null,
+        endedAt
+      });
+      if (result) await saveUserGameResult(user.uid, result);
+    };
+
+    persist().catch((error) => {
+      savedHistory.current.delete(gameId);
+      console.error("保存个人对局记录失败:", error);
+    });
+  }, [session, view]);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -80,7 +118,7 @@ export function GameScreen({ session, onLeave }) {
     let res;
     if (select.mode === "night") {
       if (picked.length !== (select.max || 1)) {
-        showToast(`需要选择 ${select.max} 名玩家`);
+        showToast("需要选择 " + select.max + " 名玩家");
         return;
       }
       res = session.nightAction(picked);
@@ -98,7 +136,7 @@ export function GameScreen({ session, onLeave }) {
   if (!view) {
     return (
       <div className="game-loading">
-        <p>正在等待房主同步游戏状态……</p>
+        <p>正在等待房主同步游戏状态...</p>
         <button className="btn ghost" onClick={onLeave}>离开</button>
       </div>
     );
@@ -112,13 +150,13 @@ export function GameScreen({ session, onLeave }) {
   const isNight = view.phase === "night";
   const phaseText =
     view.phase === "night"
-      ? `第 ${view.night} 夜`
+      ? "第 " + view.night + " 夜"
       : view.phase === "end"
         ? "游戏结束"
-        : `第 ${view.day} 天` + (view.dayStage === "voting" ? " · 投票中" : "");
+        : "第 " + view.day + " 天" + (view.dayStage === "voting" ? " · 投票中" : "");
 
   return (
-    <div className={`game ${isNight ? "night-mode" : ""}`}>
+    <div className={"game " + (isNight ? "night-mode" : "")}>
       <header className="game-header">
         <button className="link-btn" onClick={onLeave}><Icon name="back" /> 离开</button>
         <div className="phase-banner">
@@ -126,7 +164,7 @@ export function GameScreen({ session, onLeave }) {
           <span>{phaseText}</span>
         </div>
         {view.storytellerDeciding && (
-          <span className="st-deciding">说书人正在裁定……</span>
+          <span className="st-deciding">说书人正在裁定...</span>
         )}
         {isSpectator && <span className="room-code small">观战中</span>}
         {session.mode !== "single" && <span className="room-code small">房间 {session.code}</span>}
@@ -182,7 +220,7 @@ function SpectatorCard({ view }) {
           <span className="role-team">公开信息 · {view.scriptName}</span>
         </div>
         <p className="role-ability">你可以查看公开广场、投票进度和公开日志，但不能发言、私聊或执行行动。</p>
-        <p className="hint">存活 {alive}/{view.seats.length} · 第 {view.phase === "night" ? view.night + " 夜" : view.day + " 天"}</p>
+        <p className="hint">存活 {alive}/{view.seats.length} · {view.phase === "night" ? "第 " + view.night + " 夜" : "第 " + view.day + " 天"}</p>
       </div>
     </div>
   );
@@ -195,7 +233,7 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
   const inSelection = select && select.mode !== "night";
 
   if (view.dayStage === "voting") {
-    return <div className="action-bar"><span className="hint">投票进行中……</span></div>;
+    return <div className="action-bar"><span className="hint">投票进行中...</span></div>;
   }
 
   if (inSelection) {
@@ -205,8 +243,8 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
           {select.mode === "nominate"
             ? "点击广场上的玩家进行提名"
             : view.you.role === "slayer"
-              ? "点击你要射杀的玩家"
-              : "点击目标玩家(你不是真杀手,开枪只是唬人,不会有效果)"}
+              ? "点击你要射击的玩家"
+              : "点击目标玩家。你不是真杀手时开枪不会有效果，但可以试探或伪装身份。"}
         </span>
         <button className="btn primary" disabled={!select.picked.length} onClick={confirmSelection}>
           确认{select.mode === "nominate" ? "提名" : "开枪"}
@@ -225,16 +263,14 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
       )}
       {view.canSlay && view.you.alive && (view.you.role === "slayer" ? (
         <button className="btn" onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}>
-          <Icon name="slayer" /> 杀手开枪
-        </button>
+          <Icon name="slayer" /> 杀手开枪        </button>
       ) : (
         <button
           className="btn ghost bluff-btn"
-          title="任何玩家都可以公开声称自己是杀手并开枪(虚张声势)。你不是真杀手,不会有任何效果,但可以借此试探或伪装身份。"
+          title="任何玩家都可以公开声称自己是杀手并开枪。你不是真杀手时不会有效果，但可以借此试探或伪装身份。"
           onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}
         >
-          <Icon name="slayer" /> 声称杀手
-        </button>
+          <Icon name="slayer" /> 声称杀手        </button>
       ))}
       {session.isHost && view.canEndDay && (
         <button
@@ -246,13 +282,18 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
         >
           <Icon name="dusk" /> 宣布黄昏
           {view.onBlock && view.onBlock.seat != null
-            ? `(处决 ${seats[view.onBlock.seat]?.name || "未知玩家"})`
+            ? "(处决 " + (seats[view.onBlock.seat]?.name || "未知玩家") + ")"
             : "(无人被处决)"}
         </button>
       )}
     </div>
   );
 }
+
+
+
+
+
 
 
 

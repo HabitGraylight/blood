@@ -4,9 +4,15 @@
  */
 import { initializeApp } from "firebase/app";
 import {
-  getDatabase, ref, set, update, remove, push, onValue, off,
+  getDatabase, ref as databaseRef, set, update, remove, push, onValue, off,
   onChildAdded, serverTimestamp, get, child
 } from "firebase/database";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL
+} from "firebase/storage";
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -16,10 +22,12 @@ import {
   updateProfile
 } from "firebase/auth";
 import { firebaseConfig } from "../firebase-config.js";
+import { AVATAR_MAX_BYTES } from "./gameHistory.js";
 
 let app = null;
 let db = null;
 let auth = null;
+let storage = null;
 
 export function isFirebaseConfigured() {
   return !!firebaseConfig;
@@ -31,6 +39,7 @@ function ensureInit() {
     app = initializeApp(firebaseConfig);
     db = getDatabase(app);
     auth = getAuth(app);
+    storage = getStorage(app);
   }
 }
 
@@ -78,7 +87,56 @@ export async function ensureAuth() {
 
 export function roomRef(code, ...path) {
   ensureInit();
-  return ref(db, ["rooms", code, ...path].join("/"));
+  return databaseRef(db, ["rooms", code, ...path].join("/"));
+}
+
+
+export function userRef(uid, ...path) {
+  ensureInit();
+  return databaseRef(db, ["users", uid, ...path].join("/"));
+}
+
+export function userGameResultsRef(uid, ...path) {
+  ensureInit();
+  return databaseRef(db, ["userGameResults", uid, ...path].join("/"));
+}
+
+export function replayRef(gameId, ...path) {
+  ensureInit();
+  return databaseRef(db, ["replays", gameId, ...path].join("/"));
+}
+
+function avatarExtension(file) {
+  const byType = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif"
+  };
+  return byType[file.type] || "img";
+}
+
+export async function uploadUserAvatar(file) {
+  ensureInit();
+  const user = auth.currentUser;
+  if (!user || user.isAnonymous) throw new Error("请先登录后再上传头像");
+  if (!file || !file.type || !file.type.startsWith("image/")) throw new Error("请选择图片文件");
+  if (file.size > AVATAR_MAX_BYTES) throw new Error("头像文件不能超过 2MB");
+
+  const avatarPath = "avatars/" + user.uid + "/avatar-" + Date.now() + "." + avatarExtension(file);
+  const target = storageRef(storage, avatarPath);
+  await uploadBytes(target, file, { contentType: file.type });
+  const photoURL = await getDownloadURL(target);
+  await updateProfile(user, { photoURL });
+  await update(userRef(user.uid), {
+    uid: user.uid,
+    displayName: user.displayName || "",
+    email: user.email || "",
+    photoURL,
+    avatarPath,
+    updatedAt: Date.now()
+  });
+  return { photoURL, avatarPath };
 }
 
 export const fb = {
@@ -91,4 +149,7 @@ export function makeRoomCode() {
   for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
   return code;
 }
+
+
+
 
