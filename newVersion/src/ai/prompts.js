@@ -178,6 +178,22 @@ export function whisperPrompt(view, chatHistory, fromName, text) {
   ].join("\n");
 }
 
+/** 主动发起私聊的开场白 */
+export function initiateWhisperPrompt(view, chatHistory, target) {
+  const goal = view.you.alignment === "evil"
+    ? (target.isTeammate
+        ? "他是你的邪恶队友,私聊内容其他人看不到。协调战术:统一口径、商量今天把票推给谁、需要谁挡枪、伪装身份如何互相佐证。"
+        : "他不是你的队友。可以套他的身份和信息、假装交换情报误导他、或拉拢他信任你。")
+    : "你是善良阵营。可以交换/验证信息、试探对方身份、约定投票行动或建立信任小圈子。注意对方可能是邪恶玩家,别一次性交底。";
+  return [
+    buildSituation(view, chatHistory),
+    "",
+    `你决定主动私聊 ${target.name}。${goal}`,
+    "写一条自然的开场私聊(20-60字),像真人玩家发消息,直接进入话题。",
+    '只回复 JSON: {"whisper": "私聊内容"}'
+  ].join("\n");
+}
+
 /** 白天结束后的长期记忆更新 */
 export function memoPrompt(view, chatHistory, memo) {
   return [

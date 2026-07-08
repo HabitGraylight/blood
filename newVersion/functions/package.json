@@ -1,0 +1,12 @@
+{
+  "name": "botc-functions",
+  "description": "血染钟楼 LLM 转发代理 (Firebase Functions)",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-functions": "^6.1.0"
+  },
+  "private": true
+}

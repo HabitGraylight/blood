@@ -202,7 +202,11 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
     return (
       <div className="action-bar">
         <span className="hint">
-          {select.mode === "nominate" ? "点击广场上的玩家进行提名" : "点击你要射杀的玩家"}
+          {select.mode === "nominate"
+            ? "点击广场上的玩家进行提名"
+            : view.you.role === "slayer"
+              ? "点击你要射杀的玩家"
+              : "点击目标玩家(你不是真杀手,开枪只是唬人,不会有效果)"}
         </span>
         <button className="btn primary" disabled={!select.picked.length} onClick={confirmSelection}>
           确认{select.mode === "nominate" ? "提名" : "开枪"}
@@ -219,11 +223,19 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
           <Icon name="nominate" /> 提名
         </button>
       )}
-      {view.canSlay && view.you.alive && (
+      {view.canSlay && view.you.alive && (view.you.role === "slayer" ? (
         <button className="btn" onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}>
           <Icon name="slayer" /> 杀手开枪
         </button>
-      )}
+      ) : (
+        <button
+          className="btn ghost bluff-btn"
+          title="任何玩家都可以公开声称自己是杀手并开枪(虚张声势)。你不是真杀手,不会有任何效果,但可以借此试探或伪装身份。"
+          onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}
+        >
+          <Icon name="slayer" /> 声称杀手
+        </button>
+      ))}
       {session.isHost && view.canEndDay && (
         <button
           className="btn dusk"

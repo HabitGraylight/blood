@@ -7,7 +7,8 @@
 import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier } from "./llm.js";
 import {
   buildSystemPrompt, nightActionPrompt, speechPrompt,
-  nominationPrompt, votePrompt, whisperPrompt, memoPrompt
+  nominationPrompt, votePrompt, whisperPrompt, memoPrompt,
+  initiateWhisperPrompt
 } from "./prompts.js";
 import { roleName } from "../scripts/trouble-brewing.js";
 
@@ -242,6 +243,44 @@ export class AIPlayer {
     // 死人省着用遗书票
     if (!view.you.alive) return this.rng.chance(0.25);
     return this.rng.chance(0.3 + 0.4 * this.traits.aggr);
+  }
+
+  /* ---------------- 主动私聊 ---------------- */
+
+  /**
+   * 主动向某玩家发起私聊。
+   * @param target { seat, name, isTeammate, isHuman }
+   * @returns 私聊文本或 null(决定不发)
+   */
+  async initiateWhisper(view, chatHistory, target) {
+    const result = await this._ask(view, initiateWhisperPrompt(view, chatHistory, target), {
+      maxTokens: 200
+    });
+    if (result && typeof result.whisper === "string" && result.whisper.trim()) {
+      return result.whisper.trim().slice(0, 200);
+    }
+    return this._heuristicInitiateWhisper(view, target);
+  }
+
+  _heuristicInitiateWhisper(view, target) {
+    if (this._isEvil(view) && target.isTeammate) {
+      const goods = view.seats.filter(
+        (s) => s.alive && !this._evilTeamSeats(view).has(s.seat)
+      );
+      const mark = goods.length ? this.rng.pick(goods).name : "谁";
+      return this.rng.pick([
+        `今天把票往${mark}身上引,我发言配合你。`,
+        `我准备跳个村民身份,待会你帮我做证。`,
+        `${mark}的信息对我们威胁最大,想办法让大家怀疑他。`,
+        `稳住,别急着说话,先看好人自己咬起来。`
+      ]);
+    }
+    return this.rng.pick([
+      "你是什么身份?我这边有点信息,可以互相验证一下。",
+      `你怎么看今天的局势?我总觉得有人发言不对劲。`,
+      "私下说,我拿到了一条重要信息,你先告诉我你的身份我再决定说不说。",
+      "咱们俩交换下情报?我不想在广场上暴露。"
+    ]);
   }
 
   /* ---------------- 私聊回复 ---------------- */

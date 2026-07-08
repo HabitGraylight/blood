@@ -1,10 +1,13 @@
 /**
  * AI 驱动器:在引擎所在端(单机客户端/联机房主端)调度 AI 玩家行动。
  * - 夜晚:轮到 AI 的行动时自动决策
- * - 白天:按计划让 AI 依次发言、考虑提名
+ * - 白天:按拟人节奏让 AI 发言、追问、私聊串联、考虑提名
  * - 投票:轮到 AI 时自动表决
- * - 私聊:AI 收到耳语后回复
+ * - 私聊:AI 收到耳语后回复,也会主动发起私聊(尤其邪恶队友协调)
  * 所有决策都是异步的(可能走 LLM),用 key 去重防止重复调度。
+ *
+ * 发言节奏:模拟真人"读上一条消息 + 思考打字"的间隔,
+ * 由 _paceGap 统一计算;纯 AI 局(无真人存活)自动加速。
  */
 import { playerView } from "../core/view.js";
 
@@ -30,7 +33,8 @@ export class AIDriver {
     this.getStoryteller = opts.getStoryteller || (() => null);
     this.getStorytellerView = opts.getStorytellerView || (() => null);
     this.scheduled = new Set(); // 已调度任务的 key
-    this.dayPlan = null; // { day, speakQueue, nomQueue, busy }
+    this.dayPlan = null; // { day, night, queue, nomQueue, reactBudget, busy }
+    this.lastMsgLen = 0; // 上一条聊天消息长度,用于计算"阅读时间"
     this.disposed = false;
   }
 
@@ -40,6 +44,32 @@ export class AIDriver {
 
   _viewOf(seat) {
     return playerView(this.engine.state, seat);
+  }
+
+  _humansAlive() {
+    return this.engine.state.players.some((p) => p.alive && !this.aiPlayers.has(p.seat));
+  }
+
+  /**
+   * 拟人化消息间隔:阅读上一条消息的时间 + 自己思考/打字的时间。
+   * 有真人在场约 4~10 秒;纯 AI 局加速到约 2~4 秒。
+   */
+  _paceGap(scale = 1) {
+    const speedup = this._humansAlive() ? 1 : 0.4;
+    const read = Math.min(6000, 800 + this.lastMsgLen * 45);
+    const think = 2200 + this.rng.int(2800);
+    return Math.round((read + think) * speedup * scale);
+  }
+
+  /** 发消息并记录长度(驱动后续节奏) */
+  _say(seat, text, toSeat = null) {
+    this.lastMsgLen = text.length;
+    return this.pushChat(seat, text, toSeat);
+  }
+
+  _traitsOf(seat) {
+    const ai = this.aiPlayers.get(seat);
+    return (ai && ai.traits) || { aggr: 0.5, talk: 0.5 };
   }
 
   _dispatch(action) {
@@ -63,6 +93,7 @@ export class AIDriver {
     }
 
     if (s.phase === "night") {
+      this._tickDuskNarration();
       this._tickNightMemo();
       this._tickNight();
     } else if (s.dayStage === "voting") this._tickVote();
@@ -98,6 +129,23 @@ export class AIDriver {
       if (!current || current.id !== d.id) return;
       const { choice, reason } = await storyteller.decide(this.getStorytellerView(), current);
       this._dispatch({ type: "storytellerDecide", decisionId: current.id, choice, reason });
+    });
+  }
+
+  /** 入夜时的处决旁白(有处决才播) */
+  _tickDuskNarration() {
+    const storyteller = this.getStoryteller();
+    if (!storyteller) return;
+    const s = this.engine.state;
+    if (s.executedToday == null) return;
+    const name = s.players[s.executedToday].name;
+    this._once(`narrate:dusk:${s.night}`, async () => {
+      await delay(400);
+      if (this.disposed || this.engine.state.winner) return;
+      const text = await storyteller.narrate(this.getStorytellerView(), {
+        kind: "execution", name, day: s.day
+      });
+      if (text) this._dispatch({ type: "storytellerNarrate", text });
     });
   }
 
@@ -152,46 +200,99 @@ export class AIDriver {
     if (!ai) return;
 
     this._once(`vote:${s.day}:${cv.nominee}:${cv.index}`, async () => {
-      await delay(700 + this.rng.int(1200));
+      await delay(900 + this.rng.int(1600));
       if (this.disposed) return;
       const up = await ai.decideVote(this._viewOf(voter), this.getChatFor(voter));
       this._dispatch({ type: "vote", seat: voter, up });
     });
   }
 
-  /* ---------------- 白天:发言与提名 ---------------- */
+  /* ---------------- 白天:发言、私聊与提名 ---------------- */
+
+  /** 构建当天行动计划:三轮发言(后两轮按话痨度参与) + 主动私聊(穿插其中) */
+  _buildDayPlan() {
+    const s = this.engine.state;
+    const aiSeats = [...this.aiPlayers.keys()].filter((seat) => s.players[seat].alive);
+
+    // 第一轮全员发言;后两轮按 talk 特征概率参与,避免机械刷屏
+    const round1 = this.rng.shuffle(aiSeats).map((seat) => ({ kind: "speak", seat, round: "信息交换" }));
+    const later = [];
+    for (const seat of this.rng.shuffle(aiSeats)) {
+      if (this.rng.chance(0.3 + 0.55 * this._traitsOf(seat).talk)) {
+        later.push({ kind: "speak", seat, round: "质询回应" });
+      }
+    }
+    for (const seat of this.rng.shuffle(aiSeats)) {
+      if (this.rng.chance(0.2 + 0.45 * this._traitsOf(seat).talk)) {
+        later.push({ kind: "speak", seat, round: "提名前总结" });
+      }
+    }
+
+    // 主动私聊:邪恶队友协调优先;社交型玩家找人串联(优先真人)
+    const whispers = [];
+    for (const seat of aiSeats) {
+      const view = this._viewOf(seat);
+      const evilInfo = view.you.evilInfo;
+      if (evilInfo) {
+        const mates = [evilInfo.demonSeat, ...evilInfo.minionSeats].filter(
+          (m) => m !== seat && s.players[m] && s.players[m].alive
+        );
+        if (mates.length && this.rng.chance(0.55)) {
+          whispers.push({ kind: "whisper", from: seat, to: this.rng.pick(mates), isTeammate: true });
+          continue;
+        }
+      }
+      if (this.rng.chance(0.1 + 0.3 * this._traitsOf(seat).talk)) {
+        const others = s.players.filter((p) => p.alive && p.seat !== seat);
+        if (!others.length) continue;
+        // 真人玩家权重 ×3:让真人更常收到 AI 的私聊试探
+        const weighted = others.flatMap((p) => (this.aiPlayers.has(p.seat) ? [p] : [p, p, p]));
+        whispers.push({ kind: "whisper", from: seat, to: this.rng.pick(weighted).seat, isTeammate: false });
+      }
+    }
+    // 私聊穿插在后两轮发言之间,每天最多 4 条
+    for (const w of this.rng.shuffle(whispers).slice(0, 4)) {
+      later.splice(this.rng.int(later.length + 1), 0, w);
+    }
+
+    this.dayPlan = {
+      day: s.day,
+      night: s.night,
+      queue: [...round1, ...later],
+      nomQueue: this.rng.shuffle(aiSeats),
+      reactBudget: 6, // 每天 AI 互相追问回应的上限,防止无限对话
+      busy: false
+    };
+  }
 
   _tickDay() {
     const s = this.engine.state;
     if (!this.dayPlan || this.dayPlan.day !== s.day || this.dayPlan.night !== s.night) {
-      const aiSeats = [...this.aiPlayers.keys()].filter((seat) => s.players[seat].alive);
-      const rounds = ["信息交换", "质询回应", "提名前总结"];
-      this.dayPlan = {
-        day: s.day,
-        night: s.night,
-        speakQueue: rounds.flatMap((round) => this.rng.shuffle(aiSeats).map((seat) => ({ seat, round }))),
-        nomQueue: this.rng.shuffle(aiSeats),
-        busy: false
-      };
+      this._buildDayPlan();
     }
     const plan = this.dayPlan;
+
+    // 有人上处决台:说书人补一句氛围播报(模板,不耗 LLM)
+    if (s.onBlock && s.onBlock.seat != null) {
+      this._narrateTemplate(`narrate:block:${s.day}:${s.onBlock.seat}`, {
+        kind: "block",
+        name: s.players[s.onBlock.seat].name
+      });
+    }
+
     if (plan.busy) return;
 
-    if (plan.speakQueue.length) {
-      const item = plan.speakQueue.shift();
-      const seat = typeof item === "object" ? item.seat : item;
-      const round = typeof item === "object" ? item.round : "发言";
+    if (plan.queue.length) {
+      const item = plan.queue.shift();
       plan.busy = true;
       (async () => {
-        await delay(1200 + this.rng.int(2200));
-        if (this.disposed) return;
-        if (this.engine.state.phase === "day" && this.engine.state.players[seat].alive) {
-          const ai = this.aiPlayers.get(seat);
-          const text = await ai.speak(this._viewOf(seat), this.getChatFor(seat));
-          if (text) this.pushChat(seat, `【${round}】${text}`, null);
+        try {
+          if (item.kind === "speak") await this._doPlannedSpeech(item);
+          else if (item.kind === "whisper") await this._doPlannedWhisper(item);
+        } finally {
+          plan.busy = false;
+          if (!this.disposed) this.tick();
         }
-        plan.busy = false;
-        this.tick();
       })();
       return;
     }
@@ -200,14 +301,18 @@ export class AIDriver {
       const seat = plan.nomQueue.shift();
       plan.busy = true;
       (async () => {
-        await delay(1000 + this.rng.int(2000));
-        if (this.disposed) return;
+        await delay(this._paceGap(0.8));
+        if (this.disposed) { plan.busy = false; return; }
         const st = this.engine.state;
-        if (st.phase === "day" && st.dayStage === "discussion" && st.players[seat].alive) {
+        if (
+          st.phase === "day" &&
+          ["discussion", "whispers", "nominations"].includes(st.dayStage) &&
+          st.players[seat].alive
+        ) {
           const ai = this.aiPlayers.get(seat);
           const nominee = await ai.decideNomination(this._viewOf(seat), this.getChatFor(seat));
           if (nominee != null) {
-            this.pushChat(seat, `我提名 ${st.players[nominee].name}!`, null);
+            this._say(seat, `我提名 ${st.players[nominee].name}!`, null);
             plan.busy = false;
             this._dispatch({ type: "nominate", nominator: seat, nominee });
             return;
@@ -238,6 +343,7 @@ export class AIDriver {
               stage: "nominations",
               durationMs: humansAlive ? 60000 : 6000
             });
+            this._narrateTemplate(`narrate:open-nom:${s.night}:${s.day}`, { kind: "nominations-open" });
           }
         });
       } else if (s.dayStage === "nominations") {
@@ -274,12 +380,110 @@ export class AIDriver {
     }
   }
 
+  /* ---------------- 计划任务执行 ---------------- */
+
+  /** 计划中的公开发言 */
+  async _doPlannedSpeech(item) {
+    await delay(this._paceGap());
+    if (this.disposed) return;
+    const s = this.engine.state;
+    if (s.phase !== "day" || !s.players[item.seat].alive) return;
+    const ai = this.aiPlayers.get(item.seat);
+    const text = await ai.speak(this._viewOf(item.seat), this.getChatFor(item.seat));
+    if (text) {
+      const id = this._say(item.seat, `【${item.round}】${text}`, null);
+      this._maybeAIReact(item.seat, text, id, 1);
+    }
+  }
+
+  /** 计划中的主动私聊(邪恶协调/社交串联);对象是 AI 时附带一轮回复 */
+  async _doPlannedWhisper(item) {
+    await delay(this._paceGap(0.7));
+    if (this.disposed) return;
+    const s = this.engine.state;
+    if (s.phase !== "day") return;
+    const from = s.players[item.from];
+    const to = s.players[item.to];
+    if (!from || !to || !from.alive || !to.alive) return;
+    const ai = this.aiPlayers.get(item.from);
+    const text = await ai.initiateWhisper(this._viewOf(item.from), this.getChatFor(item.from), {
+      seat: item.to,
+      name: to.name,
+      isTeammate: item.isTeammate,
+      isHuman: !this.aiPlayers.has(item.to)
+    });
+    if (!text || this.disposed || this.engine.state.phase !== "day") return;
+    this._say(item.from, text, item.to);
+
+    // 对象是 AI:安排一轮私聊回复;对象是真人:等他自己回(会触发 onWhisper)
+    const replier = this.aiPlayers.get(item.to);
+    if (replier) {
+      await delay(this._paceGap(0.6));
+      if (this.disposed || this.engine.state.phase !== "day") return;
+      const reply = await replier.replyWhisper(
+        this._viewOf(item.to), this.getChatFor(item.to), from.name, text
+      );
+      if (reply) this._say(item.to, reply, item.from);
+    }
+  }
+
+  /**
+   * 一条公开消息可能引来其他 AI 的追问/回应。
+   * 被点名的优先;有问号的消息更容易被接话。
+   * 用每日 reactBudget 和 depth 限制,避免 AI 之间无限对话。
+   */
+  _maybeAIReact(fromSeat, text, chatId, depth = 1) {
+    const s = this.engine.state;
+    if (this.disposed || s.phase !== "day") return;
+    const plan = this.dayPlan;
+    if (!plan || plan.reactBudget <= 0 || depth > 2) return;
+
+    const candidates = [...this.aiPlayers.keys()].filter(
+      (seat) => seat !== fromSeat && s.players[seat].alive
+    );
+    if (!candidates.length) return;
+    const mentioned = candidates.filter((seat) => text.includes(s.players[seat].name));
+
+    let seat = null;
+    if (mentioned.length) seat = this.rng.pick(mentioned);
+    else if ((text.includes("?") || text.includes("?")) && this.rng.chance(0.4)) seat = this.rng.pick(candidates);
+    else if (this.rng.chance(0.12)) seat = this.rng.pick(candidates);
+    if (seat == null) return;
+    // 话痨更愿意接话
+    if (!this.rng.chance(0.35 + 0.55 * this._traitsOf(seat).talk)) return;
+
+    plan.reactBudget--;
+    this._once(`aireact:${chatId}:${seat}`, async () => {
+      await delay(this._paceGap(0.9));
+      if (this.disposed || this.engine.state.phase !== "day") return;
+      const ai = this.aiPlayers.get(seat);
+      const reply = await ai.speak(this._viewOf(seat), this.getChatFor(seat));
+      if (reply) {
+        const id = this._say(seat, reply, null);
+        this._maybeAIReact(seat, reply, id, depth + 1);
+      }
+    });
+  }
+
+  /** 说书人模板播报(不耗 LLM 额度) */
+  _narrateTemplate(key, event) {
+    const storyteller = this.getStoryteller();
+    if (!storyteller) return;
+    this._once(key, async () => {
+      const text = await storyteller.narrate(this.getStorytellerView(), event);
+      if (text && !this.disposed && !this.engine.state.winner) {
+        this._dispatch({ type: "storytellerNarrate", text });
+      }
+    });
+  }
+
   /* ---------------- 对话反应 ---------------- */
 
-  /** 真人发公开消息后,可能有一个 AI 回应。chatId 保证同一条消息只触发一次。 */
+  /** 真人发公开消息后,可能有 AI 回应。chatId 保证同一条消息只触发一次。 */
   onHumanChat(fromSeat, text, chatId) {
     const s = this.engine.state;
     if (s.phase !== "day" || this.disposed) return;
+    this.lastMsgLen = text.length;
     const mentioned = [...this.aiPlayers.keys()].filter(
       (seat) => s.players[seat].alive && text.includes(s.players[seat].name)
     );
@@ -292,11 +496,14 @@ export class AIDriver {
     const seat = this.rng.pick(pool);
 
     this._once(`react:${chatId != null ? chatId : Date.now()}`, async () => {
-      await delay(1500 + this.rng.int(2500));
+      await delay(this._paceGap(0.9));
       if (this.disposed || this.engine.state.phase !== "day") return;
       const ai = this.aiPlayers.get(seat);
       const reply = await ai.speak(this._viewOf(seat), this.getChatFor(seat));
-      if (reply) this.pushChat(seat, reply, null);
+      if (reply) {
+        const id = this._say(seat, reply, null);
+        this._maybeAIReact(seat, reply, id, 2); // 真人引发的对话最多再延伸一层
+      }
     });
   }
 
@@ -304,14 +511,15 @@ export class AIDriver {
   onWhisper(fromSeat, toSeat, text, chatId) {
     const ai = this.aiPlayers.get(toSeat);
     if (!ai || this.disposed) return;
+    this.lastMsgLen = text.length;
     const fromName = this.engine.state.players[fromSeat].name;
     this._once(`whisper:${chatId != null ? chatId : Date.now()}`, async () => {
-      await delay(1200 + this.rng.int(2000));
+      await delay(this._paceGap(0.7));
       if (this.disposed) return;
       const reply = await ai.replyWhisper(
         this._viewOf(toSeat), this.getChatFor(toSeat), fromName, text
       );
-      if (reply) this.pushChat(toSeat, reply, fromSeat);
+      if (reply) this._say(toSeat, reply, fromSeat);
     });
   }
 }

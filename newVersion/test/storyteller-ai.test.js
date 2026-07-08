@@ -56,6 +56,22 @@ describe("AI 说书人", () => {
     expect(peaceful.length).toBeGreaterThan(5);
   });
 
+  it("处决/开放提名/处决台播报有模板文案", async () => {
+    const st = new AIStoryteller(createRng(3));
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 5,
+      fixedRoles: ["chef", "soldier", "mayor", "baron", "imp"]
+    });
+    const view = storytellerView(engine.state);
+    const exec = await st.narrate(view, { kind: "execution", name: "玩家2", day: 1 });
+    expect(exec).toContain("玩家2");
+    const open = await st.narrate(view, { kind: "nominations-open" });
+    expect(typeof open).toBe("string");
+    expect(open.length).toBeGreaterThan(5);
+    const block = await st.narrate(view, { kind: "block", name: "玩家3" });
+    expect(block).toContain("玩家3");
+  });
+
   it("说书人提示词包含平衡哲学与完整魔典", () => {
     const sys = buildStorytellerSystemPrompt();
     expect(sys).toContain("平衡");
