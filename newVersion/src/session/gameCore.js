@@ -182,7 +182,7 @@ export class GameCore {
 
     const res = this.engine.dispatch(safe);
     if (res.ok) {
-      this.driver.noteActivity(); // 真人操作(提名/投票等)会延缓说书人推进阶段
+      this.driver.noteHumanActivity(); // 真人操作(提名/投票等)会延缓说书人推进阶段
       this.onUpdate();
       this.driver.tick();
     }
@@ -217,7 +217,7 @@ export class GameCore {
     if (!trimmed) return { ok: false, error: "消息为空" };
     if (this.engine.state.phase === "night") return { ok: false, error: "夜晚请保持安静" };
 
-    this.driver.noteActivity(); // 真人发言会延缓说书人推进阶段
+    this.driver.noteHumanActivity(); // 真人发言会延缓说书人推进阶段
     const chatId = this._pushChat(seat, trimmed.slice(0, 500), toSeat);
     if (toSeat == null) {
       this.driver.onHumanChat(seat, trimmed, chatId);

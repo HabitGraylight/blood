@@ -39,6 +39,13 @@ const RULES_BRIEF = `《血染钟楼·暗流涌动》规则要点:
 - 死亡玩家仍可说话,保留最后一次投票机会(遗书票)。
 - 信息可能是假的:中毒、酒鬼、间谍误导、隐士误判、占卜师的红鲱鱼都会制造假信息。`;
 
+const REASONING_BRIEF = `【推理工作流】发言前在心里完成,不要把步骤逐条输出:
+1. 事实抽取:先列出每名玩家的公开身份声明、能力信息、投票/提名、否认或改口,只使用上下文中出现过的内容。
+2. 约束合并:把“二选一/至少一人/没有命中/确认某角色”等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
+3. 假设分支:分别考虑“这条信息真”“这条信息假或受误导”“说话者在撒谎”三种分支,不要只挑对自己方便的一支。
+4. 反证检查:结论出手前,检查它是否与已公开身份、已死亡名单、自己此前发言或最新回应冲突。
+5. 置信表达:证据链完整时可以明确推动;只有部分线索时用怀疑、追问或条件句;邪恶玩家可以撒谎,但谎言也要自洽。`;
+
 /** 对玩家展示的座位号统一为 1 号起(与游戏界面一致);引擎内部仍是 0 起 */
 function seatNo(seat) {
   return seat + 1;
@@ -58,6 +65,64 @@ function stageAdvice(view) {
   return "中期:开始交叉验证各方声明,揪出前后矛盾;掌握关键信息的善良角色可考虑公开换取信任。";
 }
 
+const CLAIM_PATTERNS = [
+  { label: "身份声明", re: /我是|我跳|我报|身份|占卜师|厨师|共情者|调查员|图书管理员|洗衣妇|僧侣|隐士|管家|圣女|猎手|士兵|镇长|送葬者|守鸦人/ },
+  { label: "能力信息", re: /查了|查的|查到|得知|信息|红光|没红光|有恶魔|没有恶魔|有爪牙|好人|坏人|邪恶|善良|两人中|其中/ },
+  { label: "指控/投票", re: /说谎|撒谎|狼|恶魔|爪牙|可疑|假跳|冒充|混子|投|票|提名|处决/ },
+  { label: "否认/改口", re: /没说过|我没说|不是我说|听岔|记错|忘了|改口|撤回|重新说/ }
+];
+
+function compactQuote(text, max = 90) {
+  const oneLine = String(text || "").replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max)}...` : oneLine;
+}
+
+function claimLabels(text) {
+  return CLAIM_PATTERNS.filter((p) => p.re.test(text)).map((p) => p.label);
+}
+
+function playerLabel(c) {
+  return `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName || "?"}`;
+}
+
+function mentionsPairInfo(text) {
+  return /(两人|二人|两个|其中|中|里).*(有|至少).*(爪牙|恶魔|邪恶)/.test(text) || /\d+\s*(和|与|、)\s*\d+.*(有|至少).*(爪牙|恶魔|邪恶)/.test(text);
+}
+
+export function buildPublicClaimSummary(view, chatHistory) {
+  const publicChats = (chatHistory || []).filter((c) => c.to == null).slice(-120);
+  if (!publicChats.length) return "";
+
+  const byPlayer = new Map();
+  const selfLines = [];
+  let hasPairInfo = false;
+
+  for (const c of publicChats) {
+    const labels = claimLabels(c.text || "");
+    if (!labels.length) continue;
+    if (mentionsPairInfo(c.text || "")) hasPairInfo = true;
+    const key = c.fromSeat != null ? c.fromSeat : c.fromName || "?";
+    const line = `${labels.join("/")}: "${compactQuote(c.text)}"`;
+    const entry = byPlayer.get(key) || { name: playerLabel(c), lines: [] };
+    entry.lines.push(line);
+    if (entry.lines.length > 5) entry.lines.shift();
+    byPlayer.set(key, entry);
+    if (c.fromSeat === view.seat) selfLines.push(`- ${line}`);
+  }
+
+  const lines = [
+    "【公开声明摘要】(来自最近约120条公开发言;这是原话摘要,不要改写成相反意思)",
+    ...[...byPlayer.values()].map((entry) => `- ${entry.name}: ${entry.lines.join("; ")}`)
+  ];
+  if (hasPairInfo) {
+    lines.push("【推理提醒】二选一或至少一人命中的信息,不能转述成两人都是、两人都说谎或两人都邪恶。");
+  }
+  if (selfLines.length) {
+    lines.push("【你自己此前公开说过】", ...selfLines.slice(-8));
+  }
+  return lines.join("\n");
+}
+
 /** 构建系统提示:行为准则、身份、私密信息、角色策略、性格、长期记忆 */
 export function buildSystemPrompt(view, persona, memo = null) {
   const you = view.you;
@@ -65,6 +130,8 @@ export function buildSystemPrompt(view, persona, memo = null) {
     `${PLAYER_SYSTEM}`,
     "",
     RULES_BRIEF,
+    "",
+    REASONING_BRIEF,
     "",
     `【你的座位】你是 ${seatNo(view.seat)}号玩家「${view.name}」(座位号从1开始,与座位表一致)`,
     `【你的身份】${you.roleName}(${you.teamLabel},${you.alignmentLabel}阵营)`,
@@ -134,10 +201,12 @@ export function buildSituation(view, chatHistory) {
   }
   const recentLog = view.log.slice(-15);
   lines.push("【公开事件】", ...recentLog.map((l) => `- ${l.text}`));
+  const claimSummary = buildPublicClaimSummary(view, chatHistory);
+  if (claimSummary) lines.push(claimSummary);
   if (chatHistory && chatHistory.length) {
     lines.push(
       "【最近发言】(按时间顺序,最后一条是最新发言;发言人前的编号即其座位号)",
-      ...chatHistory.slice(-30).map(
+      ...chatHistory.slice(-40).map(
         (c) => `${c.fromSeat != null ? `${c.fromSeat + 1}号 ` : ""}${c.fromName}${c.to != null ? "(私聊你)" : ""}: ${c.text}`
       )
     );
@@ -216,7 +285,7 @@ export function memoPrompt(view, chatHistory, memo) {
     buildSituation(view, chatHistory),
     "",
     memo && memo.summary ? `【你此前的记忆】${memo.summary}` : "",
-    "这个白天结束了。请把今天的重要情报浓缩进你的长期记忆:1) 谁声称了什么身份/信息 2) 你怀疑谁、为什么 3) 你接下来的计划。合并旧记忆,总长不超过150字。",
+    "这个白天结束了。请把今天的重要情报浓缩进你的长期记忆:1) 谁声称了什么身份/信息 2) 你自己公开承诺或声称过什么 3) 你怀疑谁、为什么 4) 你接下来的计划。合并旧记忆;不要覆盖旧事实,除非聊天中明确有人改口、撤回或被证伪。总长不超过150字。",
     '只回复 JSON: {"memo": "记忆内容"}'
   ].filter(Boolean).join("\n");
 }
