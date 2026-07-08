@@ -535,6 +535,8 @@ describe("说书人裁量(决策挂起)", () => {
     const engine = humanGame(7, 17, ["chef", "virgin", "monk", "soldier", "mayor", "spy", "imp"]);
     runNight(engine);
     expect(engine.state.phase).toBe("day");
+    // 说书人主持下需先开放提名
+    engine.dispatch({ type: "storytellerAdvancePhase", stage: "nominations" });
     const res = engine.dispatch({ type: "nominate", nominator: 5, nominee: 1 });
     expect(res.ok).toBe(true);
     const d = engine.state.pendingStorytellerDecision;
@@ -547,6 +549,7 @@ describe("说书人裁量(决策挂起)", () => {
   it("真村民提名圣女无需裁定直接触发", () => {
     const engine = humanGame(7, 17, ["chef", "virgin", "monk", "soldier", "mayor", "spy", "imp"]);
     runNight(engine);
+    engine.dispatch({ type: "storytellerAdvancePhase", stage: "nominations" });
     engine.dispatch({ type: "nominate", nominator: 0, nominee: 1 });
     expect(engine.state.pendingStorytellerDecision).toBe(null);
     expect(engine.state.players[0].alive).toBe(false);

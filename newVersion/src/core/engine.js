@@ -576,6 +576,10 @@ export class GameEngine {
     if (s.phase !== "day" || !["discussion", "whispers", "nominations"].includes(s.dayStage)) {
       return { ok: false, error: "现在不能提名" };
     }
+    // 有说书人主持时,何时开放提名由说书人决定
+    if (this._stManual() && s.dayStage !== "nominations") {
+      return { ok: false, error: "说书人尚未开放提名" };
+    }
     const nom = s.players[nominator];
     const target = s.players[nominee];
     if (!nom || !target) return { ok: false, error: "无效座位" };

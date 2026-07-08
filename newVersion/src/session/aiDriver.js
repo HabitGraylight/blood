@@ -327,29 +327,42 @@ export class AIDriver {
     // 有说书人主持时(人类或 AI),AI 玩家等到说书人开放提名后才考虑提名,
     // 避免讨论阶段就抢跑、投票结束后阶段被悄悄推进导致提前入夜
     const hasModerator = s.storytellerMode !== "auto";
-    if (plan.nomQueue.length && (!hasModerator || s.dayStage === "nominations")) {
-      const seat = plan.nomQueue.shift();
+    const nomStageOk = (st) =>
+      st.phase === "day" && !st.winner &&
+      (hasModerator
+        ? st.dayStage === "nominations"
+        : ["discussion", "whispers", "nominations"].includes(st.dayStage));
+    if (plan.nomQueue.length && nomStageOk(s)) {
+      // 只窥视队首,不立刻出队:延迟和 LLM 决策期间阶段可能变化(如他人提名进入投票),
+      // 那种情况下这名 AI 的提名机会必须保留,等窗口回来再试,否则会被静默吞掉
+      const seat = plan.nomQueue[0];
       plan.busy = true;
       (async () => {
-        await delay(this._paceGap(0.8));
-        if (this.disposed) { plan.busy = false; return; }
-        const st = this.engine.state;
-        if (
-          st.phase === "day" &&
-          ["discussion", "whispers", "nominations"].includes(st.dayStage) &&
-          st.players[seat].alive
-        ) {
+        let consumed = false;
+        try {
+          await delay(this._paceGap(0.8));
+          if (this.disposed) return;
+          if (!nomStageOk(this.engine.state)) return; // 稍后重试,不消耗机会
+          if (!this.engine.state.players[seat].alive) { consumed = true; return; }
           const ai = this.aiPlayers.get(seat);
           const nominee = await ai.decideNomination(this._viewOf(seat), this.getChatFor(seat));
-          if (nominee != null) {
+          if (this.disposed) return;
+          // LLM 决策耗时较长,提交前再次确认提名窗口仍然打开
+          const st = this.engine.state;
+          if (!nomStageOk(st)) return;
+          consumed = true; // 到这里才算真正用掉这次提名机会
+          if (nominee != null && st.players[seat].alive && st.players[nominee]?.alive) {
             this._say(seat, `我提名 ${st.players[nominee].name}!`, null);
-            plan.busy = false;
             this._dispatch({ type: "nominate", nominator: seat, nominee });
-            return;
           }
+        } finally {
+          if (consumed) {
+            const i = plan.nomQueue.indexOf(seat);
+            if (i !== -1) plan.nomQueue.splice(i, 1);
+          }
+          plan.busy = false;
+          if (!this.disposed) this.tick();
         }
-        plan.busy = false;
-        this.tick();
       })();
       return;
     }

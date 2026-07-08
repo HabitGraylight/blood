@@ -110,9 +110,10 @@ export class AIPlayer {
     const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6 });
     if (result && Array.isArray(result.targets)) {
       // 提示词中的座位号从 1 开始(与界面一致),转回引擎的 0 起座位
+      // 只接受存活目标:对死者使用能力等于浪费(LLM 偶尔会忽视死亡标记)
       const targets = result.targets
         .map((t) => Number(t) - 1)
-        .filter((t) => view.seats[t] && (!pa.notSelf || t !== this.seat));
+        .filter((t) => view.seats[t] && view.seats[t].alive && (!pa.notSelf || t !== this.seat));
       if (targets.length === pa.targets && new Set(targets).size === targets.length) {
         return targets;
       }

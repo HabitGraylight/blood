@@ -96,7 +96,11 @@ export function playerView(state, seat, scriptArg) {
     announcements: state.announcements || [],
 
     canNominate:
-      state.phase === "day" && ["discussion", "whispers", "nominations"].includes(state.dayStage) &&
+      state.phase === "day" &&
+      // 有说书人主持时,提名要等说书人开放;auto 模式全天可提名
+      (state.storytellerMode !== "auto"
+        ? state.dayStage === "nominations"
+        : ["discussion", "whispers", "nominations"].includes(state.dayStage)) &&
       me.alive && !state.nominatorsToday.includes(seat),
     canVote:
       !!state.currentVote &&

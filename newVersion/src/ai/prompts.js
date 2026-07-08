@@ -108,12 +108,19 @@ export function buildSystemPrompt(view, persona, memo = null) {
 
 /** 构建当前局面描述 */
 export function buildSituation(view, chatHistory) {
+  const aliveSeats = view.seats.filter((s) => s.alive);
+  const deadSeats = view.seats.filter((s) => !s.alive);
   const lines = [
-    `【当前局面】第 ${view.day} 个白天,存活 ${view.seats.filter((s) => s.alive).length} 人。`,
+    `【当前局面】第 ${view.day} 个白天,存活 ${aliveSeats.length} 人。`,
     "【座位表】",
     ...view.seats.map(seatLine),
+    `【存活玩家】${aliveSeats.map((s) => `${seatNo(s.seat)}号 ${s.name}`).join("、")}`,
+    deadSeats.length
+      ? `【已死亡】${deadSeats.map((s) => `${seatNo(s.seat)}号 ${s.name}`).join("、")} —— 死者不能被提名、处决或作为投票对象;夜间能力也不应选择死者。谈论计划前先核对这份名单。`
+      : "",
     ""
-  ];
+  ].filter((l) => l !== "");
+  lines.push("");
   if (view.onBlock && view.onBlock.seat != null) {
     lines.push(`当前处决台上: ${view.seats[view.onBlock.seat].name} (${view.onBlock.votes}票)`);
   }
@@ -140,11 +147,13 @@ export function buildSituation(view, chatHistory) {
 
 export function nightActionPrompt(view, pendingAction) {
   const targets = pendingAction.targets;
+  const alive = view.seats.filter((s) => s.alive);
   return [
     buildSituation(view, []),
     "",
     `现在是夜晚,轮到你行动:${pendingAction.prompt}。`,
-    `从座位表中选择 ${targets} 名玩家(使用座位表中的座位号,从1开始)。`,
+    `从【存活玩家】中选择 ${targets} 名(使用座位表中的座位号,从1开始)。不要选择已死亡的玩家,那会浪费你的能力。`,
+    `可选座位号: ${alive.filter((s) => !pendingAction.notSelf || s.seat !== view.seat).map((s) => seatNo(s.seat)).join(", ")}`,
     `只回复 JSON: {"targets": [座位号${targets === 2 ? ",座位号" : ""}], "reason": "简短理由"}`
   ].join("\n");
 }
