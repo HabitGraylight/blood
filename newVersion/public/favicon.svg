@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="night" cx="50%" cy="38%" r="75%">
+      <stop offset="0%" stop-color="#2a1530"/>
+      <stop offset="60%" stop-color="#180d22"/>
+      <stop offset="100%" stop-color="#0c0714"/>
+    </radialGradient>
+    <radialGradient id="moon" cx="38%" cy="32%" r="80%">
+      <stop offset="0%" stop-color="#e84545"/>
+      <stop offset="55%" stop-color="#c11f2e"/>
+      <stop offset="100%" stop-color="#7a0a18"/>
+    </radialGradient>
+    <radialGradient id="face" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#ffe9b8"/>
+      <stop offset="100%" stop-color="#e0b96a"/>
+    </radialGradient>
+  </defs>
+
+  <!-- 夜空背景 -->
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="url(#night)"/>
+
+  <!-- 血月 -->
+  <circle cx="32" cy="27" r="19" fill="url(#moon)"/>
+  <circle cx="32" cy="27" r="19" fill="none" stroke="#ff6b5e" stroke-opacity="0.35" stroke-width="1.2"/>
+
+  <!-- 钟楼剪影 -->
+  <g fill="#12091a">
+    <!-- 塔尖 -->
+    <path d="M32 4 L37.5 15 L26.5 15 Z"/>
+    <!-- 塔身 -->
+    <path d="M26.5 14 h11 v6 l2.5 3 v33 h-16 v-33 l2.5 -3 Z"/>
+    <!-- 城垛 -->
+    <path d="M23 22 h3 v3 h3.4 v-3 h5.2 v3 h3.4 v-3 h3 v5 h-18 Z"/>
+    <!-- 底座 -->
+    <path d="M20 52 h24 v8 h-24 Z"/>
+  </g>
+
+  <!-- 钟面 -->
+  <circle cx="32" cy="36" r="7.5" fill="url(#face)" stroke="#3a2417" stroke-width="1.4"/>
+  <!-- 刻度 -->
+  <g stroke="#5b3a20" stroke-width="1.1" stroke-linecap="round">
+    <line x1="32" y1="29.8" x2="32" y2="31.4"/>
+    <line x1="32" y1="40.6" x2="32" y2="42.2"/>
+    <line x1="25.8" y1="36" x2="27.4" y2="36"/>
+    <line x1="36.6" y1="36" x2="38.2" y2="36"/>
+  </g>
+  <!-- 指针：临近午夜 -->
+  <g stroke="#2a1608" stroke-linecap="round">
+    <line x1="32" y1="36" x2="30.4" y2="31.6" stroke-width="1.6"/>
+    <line x1="32" y1="36" x2="35.6" y2="33.2" stroke-width="1.2"/>
+  </g>
+  <circle cx="32" cy="36" r="1.1" fill="#2a1608"/>
+
+  <!-- 钟面滴落的血 -->
+  <path d="M35.5 42.6 c0 0 1.6 2.6 1.6 3.9 a1.6 1.6 0 0 1 -3.2 0 c0 -1.3 1.6 -3.9 1.6 -3.9 Z" fill="#c11f2e"/>
+
+  <!-- 塔顶窗 -->
+  <path d="M30.6 17.5 a1.4 1.9 0 0 1 2.8 0 v2 h-2.8 Z" fill="#e8452e" opacity="0.9"/>
+</svg>
