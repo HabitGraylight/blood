@@ -19,9 +19,17 @@ describe("剧本板子引用数据", () => {
   });
 
   it("把夜晚触发时机转换为玩家可读标签", () => {
-    expect(roleTimingLabel({ night: "first" })).toBe("首夜");
-    expect(roleTimingLabel({ night: "other" })).toBe("非首夜");
-    expect(roleTimingLabel({ night: "both" })).toBe("每夜");
-    expect(roleTimingLabel({ night: null })).toBe("白天/被动");
+    const script = getScript("trouble-brewing");
+    expect(roleTimingLabel({ night: "first" }, script)).toBe("首夜");
+    expect(roleTimingLabel({ night: "other" }, script)).toBe("非首夜");
+    expect(roleTimingLabel({ night: "both" }, script)).toBe("每夜");
+    expect(roleTimingLabel({ night: null }, script)).toBe("白天/被动");
+  });
+
+  it("角色说明来自独立 reference 模块并被 registry 组装到剧本入口", () => {
+    const script = getScript("trouble-brewing");
+    expect(script.rulesBrief).toBe(script.reference.rulesBrief);
+    expect(script.reference.roleNotes.fortuneteller).toContain("红鲱鱼");
+    expect(script.roles.fortuneteller.clarify).toBe(script.reference.roleNotes.fortuneteller);
   });
 });

@@ -39,7 +39,7 @@ export function ScriptRoleReference({ scriptId, script: scriptProp, defaultOpen 
                     <div>
                       <header>
                         <strong>{role.name}</strong>
-                        <small>{roleTimingLabel(role)}{role.input ? ` · 选 ${role.targets || 1}` : ""}</small>
+                        <small>{roleTimingLabel(role, script)}{role.input ? ` · 选 ${role.targets || 1}` : ""}</small>
                       </header>
                       <p>{role.ability}</p>
                       {role.clarify && <small className="script-role-note">{role.clarify}</small>}
