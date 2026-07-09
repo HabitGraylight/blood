@@ -8,7 +8,7 @@ import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier } from "./llm
 import {
   buildSystemPrompt, nightActionPrompt, speechPrompt,
   nominationPrompt, votePrompt, whisperPrompt, memoPrompt,
-  initiateWhisperPrompt
+  initiateWhisperPrompt, slayerShotPrompt
 } from "./prompts.js";
 import { roleName } from "../scripts/trouble-brewing.js";
 
@@ -265,6 +265,28 @@ export class AIPlayer {
     // 死人省着用遗书票
     if (!view.you.alive) return this.rng.chance(0.25);
     return this.rng.chance(0.3 + 0.4 * this.traits.aggr);
+  }
+
+  /* ---------------- 杀手开枪 ---------------- */
+
+  /**
+   * 自认为是杀手且能力未用时,决定是否公开开枪。
+   * @returns 目标座位(0起)或 null(暂不开枪)
+   */
+  async decideSlayerShot(view, chatHistory) {
+    const candidates = view.seats
+      .filter((s) => s.alive && s.seat !== this.seat)
+      .map((s) => s.seat);
+    if (!candidates.length) return null;
+    const result = await this._ask(view, slayerShotPrompt(view, chatHistory, candidates), {
+      maxTokens: 200,
+      temperature: 0.4
+    });
+    if (result && result.target != null) {
+      const seat = Number(result.target) - 1;
+      if (candidates.includes(seat)) return seat;
+    }
+    return null;
   }
 
   /* ---------------- 主动私聊 ---------------- */

@@ -55,11 +55,60 @@ function scriptRolesBrief(view) {
   const byTeam = new Map();
   for (const r of Object.values(script.roles)) {
     if (!byTeam.has(r.team)) byTeam.set(r.team, []);
-    byTeam.get(r.team).push(`${r.name}(${r.ability})`);
+    byTeam.get(r.team).push(`${r.name}: ${r.ability}${r.clarify ? `【要点: ${r.clarify}】` : ""}`);
   }
-  const lines = [`【剧本角色表】《${script.name}》全部角色。有人声称的角色不在此表、或能力描述与此不符,几乎可以断定他在撒谎:`];
+  const lines = [
+    `【剧本角色表】《${script.name}》全部角色,以下是本局唯一合法的角色名与能力。提到任何角色时必须使用这里的准确名称;有人声称的角色不在此表、或把能力说成别的样子,几乎可以断定他在撒谎:`
+  ];
   for (const [team, roles] of byTeam) {
-    lines.push(`- ${TEAM_LABELS[team]}: ${roles.join(" / ")}`);
+    lines.push(`◆ ${TEAM_LABELS[team]}:`, ...roles.map((r) => `  - ${r}`));
+  }
+  return lines.join("\n");
+}
+
+/** 其它桌游/剧本里常见、但本剧本不存在的角色叫法(AI 和玩家都容易叫错) */
+const FOREIGN_ROLE_WORDS = ["猎手", "大厨", "预言家", "女巫", "守卫", "骑士", "狼人", "先知", "猎人", "白痴", "祖母", "舞蛇人"];
+
+/**
+ * 身份声称对照审计:从公开发言里提取每个人声称过的角色,
+ * 附上剧本真实能力,并标记不存在的角色名 —— 在代码里做匹配,不指望模型自己回忆。
+ */
+export function buildClaimAudit(view, chatHistory) {
+  const script = getScript(view.scriptId);
+  const names = Object.values(script.roles).map((r) => r.name);
+  const claimRe = new RegExp(`(?:我是|我就是|我跳|我报|自[认称]|真)(${names.join("|")})`);
+  const publicChats = (chatHistory || []).filter((c) => c.to == null);
+  const claims = new Map(); // seat -> Set(roleName)
+  const foreign = new Map(); // seat -> Set(word)
+
+  for (const c of publicChats) {
+    if (c.fromSeat == null) continue;
+    const text = String(c.text || "");
+    for (const m of text.matchAll(new RegExp(claimRe, "g"))) {
+      if (!claims.has(c.fromSeat)) claims.set(c.fromSeat, new Set());
+      claims.get(c.fromSeat).add(m[1]);
+    }
+    for (const w of FOREIGN_ROLE_WORDS) {
+      if (text.includes(w)) {
+        if (!foreign.has(c.fromSeat)) foreign.set(c.fromSeat, new Set());
+        foreign.get(c.fromSeat).add(w);
+      }
+    }
+  }
+  if (!claims.size && !foreign.size) return "";
+
+  const byName = new Map(Object.values(script.roles).map((r) => [r.name, r]));
+  const lines = ["【身份声称对照】(由发言自动提取;能力以剧本角色表为准,核对每个人的说法是否与真实能力一致)"];
+  for (const [seat, set] of claims) {
+    const s = view.seats[seat];
+    for (const rn of set) {
+      const r = byName.get(rn);
+      lines.push(`- ${seatNo(seat)}号 ${s ? s.name : "?"} 声称「${rn}」→ 真实能力: ${r.ability}${r.clarify ? ` (${r.clarify})` : ""}`);
+    }
+  }
+  for (const [seat, set] of foreign) {
+    const s = view.seats[seat];
+    lines.push(`- ⚠ ${seatNo(seat)}号 ${s ? s.name : "?"} 的发言里出现了本剧本不存在的角色名: ${[...set].join("、")} —— 本剧本没有这些角色;如果他在用这种名字声称身份或描述能力,基本可以断定是编造。你自己也绝不要使用这些叫法。`);
   }
   return lines.join("\n");
 }
@@ -128,11 +177,11 @@ function tempoBrief(view) {
   const lines = [`【关键数字】存活 ${alive} 人;处决需要至少 ${execLine} 票且为当日最高票。场上只剩 2 名存活玩家时邪恶立即获胜。`];
   if (alive === 3) {
     lines.push(
-      "【终局警告】只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会;逐一核对存活 3 人的身份声称——谁的角色/能力说辞对不上剧本、谁的信息链无人佐证、谁一直没被恶魔刀,谁就最可能是恶魔。不要因为某人发言混乱就投他,酒鬼和隐士本来就会混乱;要投的是逻辑上最可能是恶魔的人。"
+      "【终局警告】只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会;逐一核对存活 3 人的身份声称——谁的角色/能力说辞对不上剧本、谁的信息链无人佐证、谁一直没被恶魔刀,谁就最可能是恶魔。不要因为某人发言混乱就投他,酒鬼和隐士本来就会混乱;要投的是逻辑上最可能是恶魔的人。若有存活玩家声称杀手且未开枪,让他当场对最可疑者开枪是免费的验证;声称杀手却反复拒绝开枪的人非常可疑。"
     );
   } else if (alive === 4) {
     lines.push(
-      "【残局警告】只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会,必须把票投给最可能是恶魔的人,而不是最吵的人。"
+      "【残局警告】只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会,必须把票投给最可能是恶魔的人,而不是最吵的人。若有存活玩家声称杀手且未开枪,推动他当场开枪验证。"
     );
   } else if (alive === 5) {
     lines.push("【节奏提醒】只剩 5 人。若今天不处决,入夜再死 1 人就进入 4 人残局,善良容错只剩一次。");
@@ -144,7 +193,7 @@ function tempoBrief(view) {
 }
 
 const CLAIM_PATTERNS = [
-  { label: "身份声明", re: /我是|我跳|我报|身份|占卜师|厨师|共情者|调查员|图书管理员|洗衣妇|僧侣|隐士|管家|圣女|猎手|士兵|镇长|送葬者|守鸦人/ },
+  { label: "身份声明", re: /我是|我跳|我报|身份|占卜师|厨师|共情者|调查员|图书管理员|洗衣妇|僧侣|隐士|管家|圣女|杀手|猎手|士兵|镇长|送葬者|守鸦人|圣徒|酒鬼|镇民/ },
   { label: "能力信息", re: /查了|查的|查到|得知|信息|红光|没红光|有恶魔|没有恶魔|有爪牙|好人|坏人|邪恶|善良|两人中|其中/ },
   { label: "指控/投票", re: /说谎|撒谎|狼|恶魔|爪牙|可疑|假跳|冒充|混子|投|票|提名|处决/ },
   { label: "否认/改口", re: /没说过|我没说|不是我说|听岔|记错|忘了|改口|撤回|重新说/ }
@@ -285,6 +334,15 @@ export function buildSituation(view, chatHistory) {
   lines.push("【公开事件】", ...recentLog.map((l) => `- ${l.text}`));
   const claimSummary = buildPublicClaimSummary(view, chatHistory);
   if (claimSummary) lines.push(claimSummary);
+  const claimAudit = buildClaimAudit(view, chatHistory);
+  if (claimAudit) lines.push(claimAudit);
+  const myRecent = (chatHistory || []).filter((c) => c.fromSeat === view.seat && c.to == null).slice(-3);
+  if (myRecent.length) {
+    lines.push(
+      "【你最近的公开发言】(逐字记录;不要原样重复这些话,已提过的问题/要求别人回应过就不要再问)",
+      ...myRecent.map((c) => `- "${compactQuote(c.text, 70)}"`)
+    );
+  }
   if (chatHistory && chatHistory.length) {
     lines.push(
       "【最近发言】(按时间顺序,最后一条是最新发言;发言人前的编号即其座位号;标注“(你自己)”的是你说过的话)",
@@ -318,6 +376,23 @@ export function nightActionPrompt(view, pendingAction) {
 
 export function speechPrompt(view, chatHistory) {
   return PUBLIC_CHAT_TEMPLATE.replace("{{situation}}", buildSituation(view, chatHistory));
+}
+
+/** 杀手(或自认为是杀手的人)决定是否公开开枪 */
+export function slayerShotPrompt(view, chatHistory, candidates) {
+  const alive = view.seats.filter((s) => s.alive).length;
+  return [
+    buildSituation(view, chatHistory),
+    "",
+    "你的角色是杀手,整局限一次的公开开枪能力还没有用。现在决定要不要开枪:公开指认一名存活玩家,如果他是恶魔,他当场死亡、善良几乎立刻获胜;如果不是,什么都不会发生,而你的能力就此耗尽。",
+    "时机判断:",
+    "- 有较强证据指向某人是恶魔时,开枪是善良最干脆的斩杀手段。",
+    `- 残局(当前存活 ${alive} 人)再捏着不用,能力会跟着你一起死掉;存活≤4时,对最可能是恶魔的人开枪几乎总是正确的——即使打空,也排除了一个嫌疑。`,
+    "- 多人强烈要求你开枪验证时,一直拒绝会让你自己成为头号嫌疑。",
+    "- 前中期证据不足时可以暂不开枪,继续收集信息。",
+    `可选座位号(从1开始): ${candidates.map((c) => c + 1).join(", ")}`,
+    '只回复 JSON: {"target": 座位号或null(暂不开枪), "reason": "简短理由"}'
+  ].join("\n");
 }
 
 export function nominationPrompt(view, chatHistory, candidates) {

@@ -312,6 +312,14 @@ export class AIDriver {
       discussionLater.splice(this.rng.int(discussionLater.length + 1), 0, w);
     }
 
+    // 自认为是杀手的 AI(含以为自己是杀手的酒鬼):每天在讨论后段考虑一次是否开枪
+    for (const seat of aiSeats) {
+      const you = this._viewOf(seat).you;
+      if (you.role === "slayer" && !you.slayerUsed) {
+        discussionLater.push({ kind: "slayer", seat });
+      }
+    }
+
     this.dayPlan = {
       day: s.day,
       night: s.night,
@@ -348,6 +356,7 @@ export class AIDriver {
         try {
           if (item.kind === "speak") await this._doPlannedSpeech(item);
           else if (item.kind === "whisper") await this._doPlannedWhisper(item);
+          else if (item.kind === "slayer") await this._doPlannedSlayerShot(item);
         } finally {
           plan.busy = false;
           if (!this.disposed) this.tick();
@@ -509,6 +518,27 @@ export class AIDriver {
       const id = this._say(item.seat, `【${item.round}】${text}`, null);
       this._maybeAIReact(item.seat, text, id, 1);
     }
+  }
+
+  /** 计划中的杀手开枪考虑:决定开枪就公开宣告并结算 */
+  async _doPlannedSlayerShot(item) {
+    await delay(this._paceGap(0.8));
+    if (this.disposed) return;
+    const quiet = await this._waitForHumanQuiet({
+      quietMs: 10000,
+      maxMs: 30000,
+      valid: () => this.engine.state.phase === "day" && this.engine.state.players[item.seat]?.alive
+    });
+    if (!quiet || this.disposed) return;
+    const view = this._viewOf(item.seat);
+    if (!view.canSlay || !view.you.alive || view.you.slayerUsed) return;
+    const ai = this.aiPlayers.get(item.seat);
+    const target = await ai.decideSlayerShot(view, this.getChatFor(item.seat));
+    if (target == null || this.disposed) return;
+    const st = this.engine.state;
+    if (st.phase !== "day" || !st.players[item.seat].alive || !st.players[target]?.alive) return;
+    this._say(item.seat, `我是杀手,我对 ${st.players[target].name} 开枪!`, null);
+    this._dispatch({ type: "slayerShot", seat: item.seat, target });
   }
 
   /** 计划中的主动私聊(邪恶协调/社交串联);对象是 AI 时附带一轮回复 */
