@@ -1,12 +1,10 @@
 ﻿import React from "react";
 import { isFirebaseConfigured } from "../../session/firebase.js";
-import { isLLMConfigured } from "../../ai/llm.js";
 import { Icon } from "../components/Icon.jsx";
 import { HomeBackdrop } from "../components/HomeBackdrop.jsx";
 
 export function HomeScreen({ user, onSingle, onMulti, onLogout, onProfile }) {
   const fbReady = isFirebaseConfigured();
-  const llmReady = isLLMConfigured();
   const label = user?.displayName || user?.email || "已登录";
   const initial = label.slice(0, 1).toUpperCase();
 
@@ -31,10 +29,7 @@ export function HomeScreen({ user, onSingle, onMulti, onLogout, onProfile }) {
         <button className="mode-card" onClick={onSingle}>
           <span className="mode-icon"><Icon name="day" size={32} /></span>
           <span className="mode-name">单人 · 与 AI 对局</span>
-          <span className="mode-desc">
-            与 4-14 名 AI 玩家同行推理
-            {llmReady ? "(已启用 MiniMax-M3 环境变量模式)" : "(未配置大模型环境变量,使用基础 AI)"}
-          </span>
+          <span className="mode-desc">与 4-14 名 AI 玩家同行推理</span>
         </button>
         <button
           className={`mode-card ${fbReady ? "" : "mode-card-disabled"}`}
@@ -44,14 +39,13 @@ export function HomeScreen({ user, onSingle, onMulti, onLogout, onProfile }) {
           <span className="mode-name">多人 · 联机房间</span>
           <span className="mode-desc">
             {fbReady
-              ? "创建或加入房间,你的账号 uid 会用于同步身份与视图"
+              ? "创建或加入房间,与好友实时联机推理"
               : "需要先在 src/firebase-config.js 填入 Firebase 配置"}
           </span>
         </button>
       </div>
 
       <div className="home-footer">
-        <span className="home-note">AI 模型固定为 MiniMax-M3,通过环境变量配置</span>
         <span className="home-note">线上适配版 · 自动说书人 · 顺位举手投票 · 私聊耳语</span>
       </div>
     </div>
