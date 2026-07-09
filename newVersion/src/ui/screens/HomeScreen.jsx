@@ -2,6 +2,7 @@
 import { isFirebaseConfigured } from "../../session/firebase.js";
 import { isLLMConfigured } from "../../ai/llm.js";
 import { Icon } from "../components/Icon.jsx";
+import { HomeBackdrop } from "../components/HomeBackdrop.jsx";
 
 export function HomeScreen({ user, onSingle, onMulti, onLogout, onProfile }) {
   const fbReady = isFirebaseConfigured();
@@ -21,7 +22,7 @@ export function HomeScreen({ user, onSingle, onMulti, onLogout, onProfile }) {
 
       <div className="home-tower" aria-hidden>
         <div className="tower-moon" />
-        <div className="tower-silhouette" />
+        <HomeBackdrop />
       </div>
       <h1 className="home-title">血染钟楼</h1>
       <p className="home-subtitle">Blood on the Clocktower · 暗流涌动</p>
