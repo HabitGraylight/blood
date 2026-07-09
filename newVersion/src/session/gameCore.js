@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GameCore: one authoritative game instance.
  * It wraps the engine, AI driver and chat log, and can be serialized so refresh
  * does not throw the player back to the home screen.
@@ -10,6 +10,7 @@ import { AIStoryteller } from "../ai/storytellerController.js";
 import { AIDriver } from "./aiDriver.js";
 import { createRng, randomSeed } from "../core/rng.js";
 import { resetLLMBudget } from "../ai/llm.js";
+import { AIDebugLogger } from "../ai/debugLogger.js";
 
 export class GameCore {
   constructor(players, onUpdate, options = {}) {
@@ -21,6 +22,14 @@ export class GameCore {
     this.stAutopilot = false;
     // 存档恢复时还原各 AI 的长期记忆
     this._savedMemos = options.snapshot?.aiMemos || null;
+    const debugSnapshot = options.snapshot?.aiDebugLog || {};
+    this.aiDebugLog = {
+      enabled: !!(options.aiDebugLog?.enabled ?? debugSnapshot.enabled),
+      gameId: options.aiDebugLog?.gameId || debugSnapshot.gameId || options.gameId || null,
+      seq: debugSnapshot.seq || 0
+    };
+    this.aiDebugLogger = new AIDebugLogger(this.aiDebugLog);
+    this.aiDebugLogger.seq = this.aiDebugLog.seq || 0;
 
     // 每局独立的 LLM 调用预算
     resetLLMBudget();
@@ -60,7 +69,12 @@ export class GameCore {
       engineState: this.engine.serialize(),
       chat: this.chat.slice(-500),
       chatSeq: this.chatSeq,
-      aiMemos
+      aiMemos,
+      aiDebugLog: {
+        enabled: this.aiDebugLogger.enabled,
+        gameId: this.aiDebugLogger.gameId,
+        seq: this.aiDebugLogger.seq
+      }
     };
   }
 
@@ -70,13 +84,14 @@ export class GameCore {
       if (!p.isHuman) {
         this.aiPlayers.set(p.seat, new AIPlayer(p.seat, p.persona, this.rng, {
           traits: traitsForPersona(p.persona),
-          memo: this._savedMemos ? this._savedMemos[p.seat] || null : null
+          memo: this._savedMemos ? this._savedMemos[p.seat] || null : null,
+          debugLogger: this.aiDebugLogger
         }));
       }
     }
 
     // AI 说书人实例:"ai" 模式下驱动全局;"human" 模式下供托管/建议使用
-    this.storytellerAI = new AIStoryteller(this.rng);
+    this.storytellerAI = new AIStoryteller(this.rng, { debugLogger: this.aiDebugLogger });
 
     this.driver = new AIDriver({
       engine: this.engine,
@@ -265,3 +280,5 @@ function traitsForPersona(persona) {
   const preset = AI_PERSONAS.find((p) => p.persona === persona);
   return preset ? preset.traits : null;
 }
+
+

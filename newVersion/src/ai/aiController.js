@@ -23,44 +23,57 @@ export class AIPlayer {
     this.traits = { ...DEFAULT_TRAITS, ...(opts.traits || {}) };
     // 跨回合长期记忆 { summary, updatedDay },每个白天结束后浓缩更新
     this.memo = opts.memo || null;
+    this.debugLogger = opts.debugLogger || null;
   }
 
   /* ---------------- LLM 封装 ---------------- */
 
   async _ask(view, userPrompt, options = {}) {
-    if (!isLLMConfigured()) return null;
+    const task = options.task || "unknown";
     const messages = [
       { role: "system", content: buildSystemPrompt(view, this.persona, this.memo) },
       { role: "user", content: userPrompt }
     ];
+    const logBase = {
+      actor: "ai-player",
+      seat: this.seat,
+      phase: `${view.phase || ""}:${view.dayStage || ""}:N${view.night || 0}:D${view.day || 0}`,
+      task,
+      input: messages
+    };
+
+    if (!isLLMConfigured()) {
+      await this.debugLogger?.record({ ...logBase, error: "LLM not configured" });
+      return null;
+    }
+
     try {
       let text = await chatComplete(messages, options);
+      await this.debugLogger?.record({ ...logBase, output: text });
       let parsed = extractJSON(text);
       if (!parsed) {
-        // 解析失败重试一次:附上原回复,低温度要求纯 JSON
-        text = await chatComplete(
-          [
-            ...messages,
-            { role: "assistant", content: String(text).slice(0, 400) },
-            { role: "user", content: "你的回复无法解析。只输出一个 JSON 对象,不要输出任何其他文字。" }
-          ],
-          { ...options, temperature: 0.3 }
-        );
+        const retryMessages = [
+          ...messages,
+          { role: "assistant", content: String(text).slice(0, 400) },
+          { role: "user", content: "你的回复无法解析。只输出一个 JSON 对象,不要输出任何其他文字。" }
+        ];
+        text = await chatComplete(retryMessages, { ...options, temperature: 0.3 });
+        await this.debugLogger?.record({ ...logBase, task: `${task}:parse-retry`, input: retryMessages, output: text });
         parsed = extractJSON(text);
       }
       return parsed;
     } catch (err) {
-      console.warn(`AI(${this.seat}) LLM 调用失败,回退启发式:`, err.message);
+      await this.debugLogger?.record({ ...logBase, error: err.message });
+      console.warn(`AI(${this.seat}) LLM 调用失败,回退启发式`, err.message);
       return null;
     }
   }
-
-  /** 白天结束后更新推理档案(LLM 不可用或低预算档时静默跳过) */
   async updateMemo(view, chatHistory) {
     if (llmBudgetTier() === "low") return;
     const result = await this._ask(view, memoPrompt(view, chatHistory, this.memo), {
       maxTokens: 700,
-      temperature: 0.3
+      temperature: 0.3,
+      task: "memo"
     });
     if (!result) return;
     // 新格式:按座位的结构化推理档案
@@ -125,7 +138,7 @@ export class AIPlayer {
 
   async decideNightAction(view) {
     const pa = view.pendingAction;
-    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6 });
+    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6, task: `night:${pa.roleId}` });
     if (result && Array.isArray(result.targets)) {
       // 提示词中的座位号从 1 开始(与界面一致),转回引擎的 0 起座位
       // 只接受存活目标:对死者使用能力等于浪费(LLM 偶尔会忽视死亡标记)
@@ -165,7 +178,7 @@ export class AIPlayer {
   /* ---------------- 白天发言 ---------------- */
 
   async speak(view, chatHistory) {
-    const result = await this._ask(view, speechPrompt(view, chatHistory), { maxTokens: 300 });
+    const result = await this._ask(view, speechPrompt(view, chatHistory), { maxTokens: 300, task: "speech" });
     if (result && typeof result.speech === "string" && result.speech.trim()) {
       return result.speech.trim().slice(0, 200);
     }
@@ -211,7 +224,7 @@ export class AIPlayer {
       .map((s) => s.seat);
     if (!candidates.length) return null;
 
-    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.6 });
+    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.6, task: "nomination" });
     if (result !== null && "nominate" in result) {
       const n = result.nominate;
       if (n === null) return null;
@@ -243,7 +256,7 @@ export class AIPlayer {
     if (llmBudgetTier() === "low" && !this._isCriticalVote(view, cv)) {
       return this._heuristicVote(view, cv);
     }
-    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200, temperature: 0.55 });
+    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200, temperature: 0.55, task: "vote" });
     if (result && typeof result.vote === "boolean") return result.vote;
     return this._heuristicVote(view, cv);
   }
@@ -281,7 +294,8 @@ export class AIPlayer {
     if (!candidates.length) return null;
     const result = await this._ask(view, slayerShotPrompt(view, chatHistory, candidates), {
       maxTokens: 200,
-      temperature: 0.4
+      temperature: 0.4,
+      task: "day-action:slayerShot"
     });
     if (result && result.target != null) {
       const seat = Number(result.target) - 1;
@@ -299,7 +313,8 @@ export class AIPlayer {
    */
   async initiateWhisper(view, chatHistory, target) {
     const result = await this._ask(view, initiateWhisperPrompt(view, chatHistory, target), {
-      maxTokens: 200
+      maxTokens: 200,
+      task: "whisper:initiate"
     });
     if (result && typeof result.whisper === "string" && result.whisper.trim()) {
       return result.whisper.trim().slice(0, 200);
@@ -332,7 +347,8 @@ export class AIPlayer {
 
   async replyWhisper(view, chatHistory, fromName, text) {
     const result = await this._ask(view, whisperPrompt(view, chatHistory, fromName, text), {
-      maxTokens: 200
+      maxTokens: 200,
+      task: "whisper:reply"
     });
     if (result && typeof result.reply === "string" && result.reply.trim()) {
       return result.reply.trim().slice(0, 200);

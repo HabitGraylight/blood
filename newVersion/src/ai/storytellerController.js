@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AI 说书人。
  * 依据完整魔典(storytellerView)对引擎挂起的裁量决策作出选择,
  * 并在关键节点生成氛围旁白。
@@ -12,22 +12,36 @@ import {
 } from "./prompts.js";
 
 export class AIStoryteller {
-  constructor(rng) {
+  constructor(rng, opts = {}) {
     this.rng = rng;
+    this.debugLogger = opts.debugLogger || null;
   }
 
   async _ask(userPrompt, options = {}) {
-    if (!isLLMConfigured()) return null;
+    const task = options.task || "storyteller";
+    const messages = [
+      { role: "system", content: buildStorytellerSystemPrompt() },
+      { role: "user", content: userPrompt }
+    ];
+    const logBase = {
+      actor: "ai-storyteller",
+      seat: "storyteller",
+      phase: "storyteller",
+      task,
+      input: messages
+    };
+
+    if (!isLLMConfigured()) {
+      await this.debugLogger?.record({ ...logBase, error: "LLM not configured" });
+      return null;
+    }
+
     try {
-      const text = await chatComplete(
-        [
-          { role: "system", content: buildStorytellerSystemPrompt() },
-          { role: "user", content: userPrompt }
-        ],
-        { maxTokens: 300, temperature: 0.4, timeoutMs: 30000, ...options }
-      );
+      const text = await chatComplete(messages, { maxTokens: 300, temperature: 0.4, timeoutMs: 30000, ...options });
+      await this.debugLogger?.record({ ...logBase, output: text });
       return extractJSON(text);
     } catch (err) {
+      await this.debugLogger?.record({ ...logBase, error: err.message });
       console.warn("AI 说书人 LLM 调用失败,使用默认裁定:", err.message);
       return null;
     }
@@ -38,7 +52,9 @@ export class AIStoryteller {
    * @returns {Promise<{choice: number, reason: string|null}>} 候选序号(失败时为默认项)
    */
   async decide(stView, decision) {
-    const result = await this._ask(storytellerDecisionPrompt(stView, decision));
+    const result = await this._ask(storytellerDecisionPrompt(stView, decision), {
+      task: `storyteller:decision:${decision.type || decision.roleId || "unknown"}`
+    });
     if (result && Number.isInteger(result.choice) && decision.options[result.choice]) {
       return { choice: result.choice, reason: typeof result.reason === "string" ? result.reason.slice(0, 120) : null };
     }
@@ -52,7 +68,11 @@ export class AIStoryteller {
    */
   async narrate(stView, event) {
     if (event.kind === "dawn" || event.kind === "execution") {
-      const result = await this._ask(storytellerNarrationPrompt(stView, event), { maxTokens: 200, temperature: 0.8 });
+      const result = await this._ask(storytellerNarrationPrompt(stView, event), {
+        maxTokens: 200,
+        temperature: 0.8,
+        task: `storyteller:narration:${event.kind}`
+      });
       if (result && typeof result.narration === "string" && result.narration.trim()) {
         return result.narration.trim().slice(0, 160);
       }

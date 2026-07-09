@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { AVAILABLE_SCRIPTS, getSetupForScript, DEFAULT_SCRIPT_ID } from "../../scripts/registry.js";
 import { ScriptSelect } from "../components/ScriptSelect.jsx";
 
@@ -7,6 +7,7 @@ export function SingleSetupScreen({ onStart, onBack }) {
   const [count, setCount] = useState(8);
   const [scriptId, setScriptId] = useState(DEFAULT_SCRIPT_ID);
   const [aiStoryteller, setAiStoryteller] = useState(true);
+  const [aiDebugLog, setAiDebugLog] = useState(false);
   const script = AVAILABLE_SCRIPTS.find((s) => s.id === scriptId) || AVAILABLE_SCRIPTS[0];
   const setup = getSetupForScript(scriptId, count);
 
@@ -53,12 +54,22 @@ export function SingleSetupScreen({ onStart, onBack }) {
         {aiStoryteller
           ? "AI 说书人会像真人说书人一样掌控局面，裁定误注册与假信息，控制白天节奏，并为对局配上旁白。"
           : "关闭后由系统按固定概率自动裁定，使用经典模式。"}
+      </p>      <label className="field checkbox-field">
+        <span>AI 调试日志</span>
+        <input
+          type="checkbox"
+          checked={aiDebugLog}
+          onChange={(e) => setAiDebugLog(e.target.checked)}
+        />
+      </label>
+      <p className="hint">
+        开启后会把本局所有 AI 的 LLM 输入和输出写入开发服务器的 logs 目录，用于调试复盘。
       </p>
       <div className="btn-row">
         <button className="btn ghost" onClick={onBack}>返回</button>
         <button
           className="btn primary"
-          onClick={() => onStart(name.trim() || "我", count, scriptId, aiStoryteller)}
+          onClick={() => onStart(name.trim() || "我", count, scriptId, aiStoryteller, aiDebugLog)}
         >
           天黑请闭眼
         </button>

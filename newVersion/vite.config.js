@@ -1,13 +1,59 @@
-﻿import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+import fs from "node:fs";
+import path from "node:path";
 
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function aiDebugLogPlugin() {
+  return {
+    name: "ai-debug-log",
+    configureServer(server) {
+      server.middlewares.use("/api/debug/ai-log", (req, res) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end("method not allowed");
+          return;
+        }
+        let body = "";
+        req.on("data", (chunk) => {
+          body += chunk;
+          if (body.length > 2_000_000) req.destroy();
+        });
+        req.on("end", () => {
+          try {
+            const data = JSON.parse(body || "{}");
+            const safeGameId = String(data.gameId || "game").replace(/[^a-zA-Z0-9_.-]/g, "_");
+            const dir = path.join(process.cwd(), "logs");
+            fs.mkdirSync(dir, { recursive: true });
+            const file = path.join(dir, `${safeGameId}.csv`);
+            const exists = fs.existsSync(file);
+            const columns = ["seq", "ts", "actor", "seat", "phase", "task", "input", "output", "error"];
+            const row = columns.map((key) => csvCell(data[key])).join(",") + "\n";
+            if (!exists) fs.writeFileSync(file, columns.join(",") + "\n", "utf8");
+            fs.appendFileSync(file, row, "utf8");
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ok: true }));
+          } catch (error) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ ok: false, error: error.message }));
+          }
+        });
+      });
+    }
+  };
+}
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const minimaxKey = env.MINIMAX_API_KEY || env.ANTHROPIC_API_KEY || env.VITE_MINIMAX_API_KEY || "";
   const minimaxBase = env.MINIMAX_BASE_URL || env.ANTHROPIC_BASE_URL || "https://api.minimaxi.com/anthropic";
 
   return {
-    plugins: [react()],
+    plugins: [react(), aiDebugLogPlugin()],
     define: {
       // 本地有 key(开发代理注入)或显式指向已部署的生产代理(如 Cloudflare Worker)都视为已配置
       __LLM_CONFIGURED__: JSON.stringify(Boolean(minimaxKey) || Boolean(env.VITE_MINIMAX_ENDPOINT))

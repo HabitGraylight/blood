@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { AuthScreen } from "./screens/AuthScreen.jsx";
 import { HomeScreen } from "./screens/HomeScreen.jsx";
 import { ProfileScreen } from "./screens/ProfileScreen.jsx";
@@ -118,9 +118,9 @@ export function App() {
     navigate("home");
   }, [session, navigate]);
 
-  const startSingle = useCallback((playerName, playerCount, scriptId, aiStoryteller = true) => {
+  const startSingle = useCallback((playerName, playerCount, scriptId, aiStoryteller = true, aiDebugLog = false) => {
     const s = new LocalSession({
-      playerName, playerCount, scriptId, aiStoryteller,
+      playerName, playerCount, scriptId, aiStoryteller, aiDebugLog,
       avatar: authUser?.photoURL || null
     });
     setSession(s);

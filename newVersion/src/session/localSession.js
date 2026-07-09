@@ -9,17 +9,20 @@ function makeGameId() {
 }
 
 export class LocalSession {
-  constructor({ playerName, playerCount, scriptId, seed, snapshot, aiStoryteller = true, avatar = null } = {}) {
+  constructor({ playerName, playerCount, scriptId, seed, snapshot, aiStoryteller = true, aiDebugLog = false, avatar = null } = {}) {
     this.listeners = new Set();
     this.isHost = true;
     this.mode = "single";
     this._disposed = false;
     this.gameId = snapshot?.gameId || makeGameId();
     this.startedAt = snapshot?.startedAt || Date.now();
+    this.aiDebugLog = !!(snapshot?.aiDebugLog ?? aiDebugLog);
 
     if (snapshot?.core) {
       this.scriptId = snapshot.scriptId || snapshot.core.scriptId || "trouble-brewing";
-      this.core = GameCore.hydrate(snapshot.core, () => this._handleUpdate());
+      this.core = GameCore.hydrate(snapshot.core, () => this._handleUpdate(), {
+        aiDebugLog: { enabled: this.aiDebugLog, gameId: this.gameId }
+      });
       this.mySeat = this.core.seatOf(HUMAN_ID);
       this.playerName = snapshot.playerName || this.core.state.players[this.mySeat]?.name || "我";
       this.playerCount = this.core.state.players.length;
@@ -52,7 +55,9 @@ export class LocalSession {
     this.scriptId = scriptId || "trouble-brewing";
     this.core = new GameCore(players, () => this._handleUpdate(), {
       scriptId: this.scriptId,
-      aiStoryteller
+      aiStoryteller,
+      gameId: this.gameId,
+      aiDebugLog: { enabled: this.aiDebugLog, gameId: this.gameId }
     });
     this.mySeat = this.core.seatOf(HUMAN_ID);
     this.core.start();
@@ -90,6 +95,9 @@ export class LocalSession {
         playerName: this.playerName,
         playerCount: this.playerCount,
         scriptId: this.scriptId,
+        aiDebugLog: this.aiDebugLog,
+        gameId: this.gameId,
+        startedAt: this.startedAt,
         savedAt: Date.now(),
         core: this.core.serialize()
       }));

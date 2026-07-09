@@ -13,3 +13,5 @@ oldVersion/data/
 
 *.log
 .DS_Store
+
+newVersion/logs/
