@@ -75,6 +75,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 全局隐藏滚动条(保留滚动功能) */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .app { min-height: 100%; height: 100%; display: flex; flex-direction: column; }
 
 /* 全局画框:游戏内取消,避免与界面竞争 */
@@ -371,16 +381,7 @@ textarea { resize: vertical; }
 .setup-screen {
   max-width: 560px; margin: 4vh auto; padding: 28px 32px; width: calc(100% - 40px);
   max-height: calc(100vh - 8vh); overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(194, 160, 97, 0.45) transparent;
 }
-.setup-screen::-webkit-scrollbar { width: 8px; }
-.setup-screen::-webkit-scrollbar-track { background: transparent; }
-.setup-screen::-webkit-scrollbar-thumb {
-  background: rgba(194, 160, 97, 0.45);
-  border-radius: 999px;
-}
-.setup-screen::-webkit-scrollbar-thumb:hover { background: rgba(231, 208, 155, 0.7); }
 .setup-screen h2 {
   margin: 0 0 4px;
   padding-bottom: 14px;
@@ -884,7 +885,6 @@ textarea { resize: vertical; }
 .chat-scroll {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
   padding: 14px; display: flex; flex-direction: column; gap: 10px;
-  scrollbar-gutter: stable;
 }
 
 .msg { display: flex; flex-direction: column; max-width: 92%; }
@@ -1028,6 +1028,86 @@ select option:disabled { color: var(--ink-faint); }
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .modal { max-width: 440px; width: 100%; padding: 28px 32px; }
+
+/* ---------- 板子角色一览弹窗 ---------- */
+.script-role-modal {
+  max-width: 680px;
+  width: 100%;
+  max-height: 84vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.script-role-modal-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 28px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.script-role-modal-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--gold-bright);
+  font-size: 1.2rem;
+  letter-spacing: 0.08em;
+}
+.script-role-modal-sub small {
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+}
+.script-role-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.script-role-modal-close:hover {
+  color: var(--gold-bright);
+  background: rgba(194, 160, 97, 0.1);
+}
+.script-role-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 14px 20px 22px;
+}
+.script-role-modal-body .script-role-grid {
+  grid-template-columns: 1fr;
+}
+@media (min-width: 560px) {
+  .script-role-modal-body .script-role-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ---------- Header 操作区 ---------- */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.btn.compact {
+  padding: 6px 14px;
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
 
 /* ---------- SVG 图标 ---------- */
 .icon { display: inline-block; vertical-align: -0.18em; flex-shrink: 0; }
@@ -1633,9 +1713,6 @@ select option:disabled { color: var(--ink-faint); }
   color: var(--good);
   font-size: 0.8rem;
 }
-.script-select-menu::-webkit-scrollbar { width: 8px; }
-.script-select-menu::-webkit-scrollbar-track { background: transparent; }
-.script-select-menu::-webkit-scrollbar-thumb { background: rgba(194, 160, 97, 0.3); border-radius: 999px; }
 
 /* ---------- 玩家数量滑块 ---------- */
 .range-field {
@@ -1687,70 +1764,6 @@ select option:disabled { color: var(--ink-faint); }
   border: 1px solid rgba(12, 10, 16, 0.9);
   background: var(--gold-bright);
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
-}
-
-/* ---------- 滚动条 ---------- */
-.chat-scroll,
-.left-panel,
-.end-card,
-.modal,
-.grimoire-list,
-.story-log,
-.private-review,
-.replay-list,
-.replay-detail,
-.profile-page {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(194, 160, 97, 0.34) transparent;
-}
-.chat-scroll::-webkit-scrollbar,
-.left-panel::-webkit-scrollbar,
-.end-card::-webkit-scrollbar,
-.modal::-webkit-scrollbar,
-.grimoire-list::-webkit-scrollbar,
-.story-log::-webkit-scrollbar,
-.private-review::-webkit-scrollbar,
-.replay-list::-webkit-scrollbar,
-.replay-detail::-webkit-scrollbar,
-.profile-page::-webkit-scrollbar {
-  width: 8px;
-}
-.chat-scroll::-webkit-scrollbar-track,
-.left-panel::-webkit-scrollbar-track,
-.end-card::-webkit-scrollbar-track,
-.modal::-webkit-scrollbar-track,
-.grimoire-list::-webkit-scrollbar-track,
-.story-log::-webkit-scrollbar-track,
-.private-review::-webkit-scrollbar-track,
-.replay-list::-webkit-scrollbar-track,
-.replay-detail::-webkit-scrollbar-track,
-.profile-page::-webkit-scrollbar-track {
-  background: transparent;
-}
-.chat-scroll::-webkit-scrollbar-thumb,
-.left-panel::-webkit-scrollbar-thumb,
-.end-card::-webkit-scrollbar-thumb,
-.modal::-webkit-scrollbar-thumb,
-.grimoire-list::-webkit-scrollbar-thumb,
-.story-log::-webkit-scrollbar-thumb,
-.private-review::-webkit-scrollbar-thumb,
-.replay-list::-webkit-scrollbar-thumb,
-.replay-detail::-webkit-scrollbar-thumb,
-.profile-page::-webkit-scrollbar-thumb {
-  background: rgba(194, 160, 97, 0.3);
-  border-radius: 999px;
-}
-.chat-scroll::-webkit-scrollbar-thumb:hover,
-.left-panel::-webkit-scrollbar-thumb:hover,
-.end-card::-webkit-scrollbar-thumb:hover,
-.modal::-webkit-scrollbar-thumb:hover,
-.grimoire-list::-webkit-scrollbar-thumb:hover,
-.story-log::-webkit-scrollbar-thumb:hover,
-.private-review::-webkit-scrollbar-thumb:hover,
-.replay-list::-webkit-scrollbar-thumb:hover,
-.replay-detail::-webkit-scrollbar-thumb:hover,
-.profile-page::-webkit-scrollbar-thumb:hover {
-  background: rgba(194, 160, 97, 0.5);
 }
 
 /* ---------- 响应式 ---------- */

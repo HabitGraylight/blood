@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { TownSquare } from "../components/TownSquare.jsx";
 import { RoleCard } from "../components/RoleCard.jsx";
-import { ScriptRoleReference } from "../components/ScriptRoleReference.jsx";
+import { ScriptRoleModal } from "../components/ScriptRoleModal.jsx";
 import { ChatPanel } from "../components/ChatPanel.jsx";
 import { VoteBanner } from "../components/VoteBanner.jsx";
 import { NightPanel } from "../components/NightPanel.jsx";
@@ -59,6 +59,7 @@ export function GameScreen({ session, onLeave }) {
   // 目标选择模式: null | 'nominate' | 'slayer' | 'night'
   const [select, setSelect] = useState(null); // { mode, picked: [], max, notSelf }
   const [toast, setToast] = useState("");
+  const [showScriptModal, setShowScriptModal] = useState(false);
 
   const view = session.getView();
   const chat = session.getChat();
@@ -201,14 +202,18 @@ export function GameScreen({ session, onLeave }) {
         {view.storytellerDeciding && (
           <span className="st-deciding">说书人正在裁定...</span>
         )}
-        {isSpectator && <span className="room-code small">观战中</span>}
-        {session.mode !== "single" && <span className="room-code small">房间 {session.code}</span>}
+        <div className="header-actions">
+          {isSpectator && <span className="room-code small">观战中</span>}
+          {session.mode !== "single" && <span className="room-code small">房间 {session.code}</span>}
+          <button className="btn ghost compact" onClick={() => setShowScriptModal(true)}>
+            <Icon name="log" /> 查看板子
+          </button>
+        </div>
       </header>
 
       <div className="game-body">
         <aside className="left-panel">
           {isSpectator ? <SpectatorCard view={view} /> : <RoleCard view={view} />}
-          <ScriptRoleReference scriptId={view.scriptId} />
         </aside>
 
         <main className="center-panel">
@@ -240,6 +245,9 @@ export function GameScreen({ session, onLeave }) {
 
       {!isSpectator && isNight && <NightPanel view={view} select={select} confirm={confirmSelection} />}
       {view.phase === "end" && <EndOverlay view={view} onLeave={onLeave} />}
+      {showScriptModal && (
+        <ScriptRoleModal scriptId={view.scriptId} onClose={() => setShowScriptModal(false)} />
+      )}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
