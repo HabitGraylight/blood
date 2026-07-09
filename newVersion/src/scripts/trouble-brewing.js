@@ -76,6 +76,7 @@ export const ROLES = {
   },
   fortuneteller: {
     id: "fortuneteller", name: "占卜师", team: TEAM.TOWNSFOLK, night: "both", input: true, targets: 2,
+    prompt: "选择两名玩家,占卜他们之中是否有恶魔",
     ability: "每个夜晚,选择两名玩家:你会得知他们之中是否有恶魔。场上有一名善良玩家会被你的能力误判为恶魔。",
     clarify: "答案只有『有/没有恶魔』;『没有』只排除恶魔,两人仍可能是爪牙,绝不等于两人是好人;红鲱鱼好人会被永久误报为『有恶魔』;不存在『查村民』这种信息",
     symbol: "卜"
@@ -88,12 +89,14 @@ export const ROLES = {
   },
   monk: {
     id: "monk", name: "僧侣", team: TEAM.TOWNSFOLK, night: "other", input: true, targets: 1, notSelf: true,
+    prompt: "选择一名玩家保护(不能是自己)",
     ability: "每个夜晚(首夜除外),选择一名其他玩家:今晚恶魔无法杀死他。",
     clarify: "只能保护别人,不能保护自己;也不会知道保护是否真的挡了刀",
     symbol: "僧"
   },
   ravenkeeper: {
     id: "ravenkeeper", name: "守鸦人", team: TEAM.TOWNSFOLK, night: "other", input: true, targets: 1,
+    prompt: "你死了!选择一名玩家,得知他的真实角色",
     ability: "如果你在夜晚死亡,你会被唤醒并选择一名玩家:你会得知他的角色。",
     clarify: "活着的时候没有任何信息;只有夜里被杀的那一刻才能查一个人",
     symbol: "鸦"
@@ -124,12 +127,13 @@ export const ROLES = {
   },
   butler: {
     id: "butler", name: "管家", team: TEAM.OUTSIDER, night: "both", input: true, targets: 1, notSelf: true,
+    prompt: "选择一名玩家作为你的主人",
     ability: "每个夜晚,选择一名玩家作为你的主人:明天白天,只有当他投票时,你才能投票。",
     clarify: "只限制自己的投票,没有任何查验或保护效果",
     symbol: "管"
   },
   drunk: {
-    id: "drunk", name: "酒鬼", team: TEAM.OUTSIDER, night: null, input: false, hidden: true,
+    id: "drunk", name: "酒鬼", team: TEAM.OUTSIDER, night: null, input: false, hidden: true, noAbility: true,
     ability: "你以为你是一个村民角色,但其实不是。",
     clarify: "酒鬼自己不知道自己是酒鬼;他以为的村民能力得到的信息可能全是假的",
     symbol: "醉"
@@ -148,6 +152,7 @@ export const ROLES = {
   },
   poisoner: {
     id: "poisoner", name: "投毒者", team: TEAM.MINION, night: "both", input: true, targets: 1,
+    prompt: "选择一名玩家下毒",
     ability: "每个夜晚,选择一名玩家:他直到明天黄昏中毒。",
     clarify: "中毒者的能力失效、得到的信息可能是假的;这是场上假信息的主要来源之一",
     symbol: "毒"
@@ -173,6 +178,7 @@ export const ROLES = {
   },
   imp: {
     id: "imp", name: "小恶魔", team: TEAM.DEMON, night: "other", input: true, targets: 1,
+    prompt: "选择一名玩家杀死(选择自己则传位给爪牙)",
     ability: "每个夜晚(首夜除外),选择一名玩家:他死亡。如果你以此方式杀死自己,一名爪牙会变成小恶魔。",
     clarify: "首夜不杀人;僧侣保护/士兵免疫会让夜晚出现平安夜",
     symbol: "魔"

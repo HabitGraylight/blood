@@ -5,25 +5,31 @@
  *
  * 阶段流转:
  *   setup -> night(首夜) -> day(discussion/voting) -> night -> day ... -> end
+ *
+ * 引擎只运行通用生命周期(夜间队列、死亡管线、提名/投票/处决、说书人裁定挂起/恢复),
+ * 不包含任何具体角色逻辑。角色行为以 hook 的形式由剧本提供(script.behaviors),
+ * 契约见 scripts/trouble-brewing-behaviors.js 顶部说明;引擎通过 _buildBehaviorContext
+ * 暴露给行为模块的上下文 API 也在本文件中定义。
  */
 import { getScript, TEAM } from "../scripts/registry.js";
 import { assignRoles, effectiveRole, hasRealAbility } from "./setup.js";
 import { createRng, randomSeed } from "./rng.js";
 import {
-  washerwomanInfo, librarianInfo, investigatorInfo, chefInfo, empathInfo,
-  fortuneTellerInfo, undertakerInfo, ravenkeeperInfo, spyGrimoire,
-  demonFirstNightInfo, minionFirstNightInfo, registersAsDemon, registrationOf,
-  buildNightInfoOptions
+  minionFirstNightInfo, demonFirstNightInfo, buildNightInfoOptions
 } from "./info.js";
 import { checkWin, resolveVoteResult } from "./rules.js";
 
 function roleNameFor(script, roleId) { return script.roles[roleId] ? script.roles[roleId].name : roleId; }
+
+const DAY_ACTION_STAGES = ["discussion", "whispers", "nominations"];
 
 export class GameEngine {
   constructor(state, rng) {
     this.state = state;
     this.script = getScript(state.scriptId);
     this.roles = this.script.roles;
+    this.behaviors = this.script.behaviors || { roles: {} };
+    this.ctx = this._buildBehaviorContext();
     if (rng) {
       this.rng = rng;
     } else {
@@ -88,6 +94,58 @@ export class GameEngine {
     return new GameEngine(state);
   }
 
+  /* ---------------- 行为 hook 基础设施 ---------------- */
+
+  _roleBehavior(roleId) {
+    return (this.behaviors.roles && this.behaviors.roles[roleId]) || null;
+  }
+
+  _roleHook(roleId, name) {
+    const rb = this._roleBehavior(roleId);
+    return rb && typeof rb[name] === "function" ? rb[name] : null;
+  }
+
+  /**
+   * 暴露给剧本行为模块的上下文。角色 hook 只应通过这里与引擎交互,
+   * 这个对象就是"新增剧本可以依赖的引擎 API"。
+   */
+  _buildBehaviorContext() {
+    const engine = this;
+    return {
+      get state() { return engine.state; },
+      get script() { return engine.script; },
+      get roles() { return engine.roles; },
+      get rng() { return engine.rng; },
+      // 输出
+      log: (text, type) => engine._log(text, type),
+      tell: (seat, text, kind) => engine._tell(seat, text, kind),
+      note: (text, type) => engine._note(text, type),
+      // 查询
+      alive: () => engine._alive(),
+      isCorrupt: (p) => engine._isCorrupt(p),
+      /** 真实拥有能力且正以真实角色行动(排除酒鬼等伪装身份) */
+      actsWithTrueAbility: (p) => hasRealAbility(p, engine.script) && effectiveRole(p) === p.role,
+      stManual: () => engine._stManual(),
+      roleName: (roleId) => roleNameFor(engine.script, roleId),
+      roleHook: (roleId, name) => engine._roleHook(roleId, name),
+      // 状态变更
+      kill: (seat, cause) => engine._kill(seat, cause),
+      execute: (seat) => engine._execute(seat),
+      win: (winner, reason) => engine._win(winner, reason),
+      checkWin: (cause) => engine._checkWin(cause),
+      nightfall: () => engine._nightfall(),
+      beginVote: (nominator, nominee) => engine._beginVote(nominator, nominee),
+      resumeNight: () => engine._resumeNight(),
+      // 恶魔击杀管线
+      safeFromDemon: (target) => engine._safeFromDemon(target),
+      demonKillFinal: (seat) => engine._demonKillFinal(seat),
+      // 说书人裁定
+      requestDecision: (dec) => engine._requestDecision(dec),
+      requestInfoDecision: (player, roleId, corrupt, targets) =>
+        engine._requestInfoDecision(player, roleId, corrupt, targets)
+    };
+  }
+
   /* ---------------- 公共入口 ---------------- */
 
   dispatch(action) {
@@ -103,17 +161,17 @@ export class GameEngine {
       nightAction: () => this._handleNightAction(action),
       nominate: () => this._handleNominate(action),
       vote: () => this._handleVote(action),
-      slayerShot: () => this._handleSlayerShot(action),
       endDay: () => this._handleEndDay(action),
       storytellerDecide: () => this._handleStorytellerDecide(action),
       storytellerNarrate: () => this._handleStorytellerNarrate(action),
       storytellerSetInfoOverride: () => this._handleStorytellerSetInfoOverride(action),
       storytellerSetRegistration: () => this._handleStorytellerSetRegistration(action),
       storytellerSetNightDeath: () => this._handleStorytellerSetNightDeath(action),
-      storytellerResolveMayor: () => this._handleStorytellerResolveMayor(action),
       storytellerAdvancePhase: () => this._handleStorytellerAdvancePhase(action)
     };
-    const fn = handlers[action.type];
+    // 剧本专属动作(如杀手开枪)与引擎内建动作同级
+    const scriptAction = this.behaviors.actions && this.behaviors.actions[action.type];
+    const fn = handlers[action.type] || (scriptAction && (() => scriptAction(this.ctx, action)));
     if (!fn) return { ok: false, error: `未知动作: ${action.type}` };
     try {
       return fn() || { ok: true };
@@ -139,8 +197,8 @@ export class GameEngine {
   }
 
   _isCorrupt(player) {
-    // 中毒或酒鬼 → 能力失效/得到假信息
-    return player.poisonedBy != null || player.role === "drunk";
+    // 中毒或本身没有真实能力(如酒鬼) → 能力失效/得到假信息
+    return player.poisonedBy != null || !hasRealAbility(player, this.script);
   }
 
   /** 非 auto 模式:裁量点交给说书人(人类或 AI)决定 */
@@ -166,66 +224,25 @@ export class GameEngine {
     const isFirst = s.night === 1;
     this._log(isFirst ? "第一个夜晚降临,所有人闭上眼睛……" : `第 ${s.night} 个夜晚降临……`);
 
-    // 非 auto 模式:首夜前先让说书人复核设置期裁量(酒鬼伪装、红鲱鱼)
+    // 非 auto 模式:首夜前先让说书人复核剧本的设置期裁量(如酒鬼伪装、红鲱鱼)
     if (isFirst && this._stManual()) {
       if (this._requestSetupDecision()) return; // 挂起,裁定后继续
     }
     this._nightSetupAndQueue();
   }
 
-  /** 设置期裁量:依次征询酒鬼伪装、占卜师红鲱鱼。返回 true 表示已挂起。 */
+  /** 设置期裁量:依次征询剧本定义的各个设置步骤。返回 true 表示已挂起。 */
   _requestSetupDecision() {
     const s = this.state;
     s.setupFlags = s.setupFlags || {};
-
-    if (!s.setupFlags.drunk) {
-      const drunk = s.players.find((p) => p.role === "drunk");
-      if (drunk) {
-        const inPlay = new Set(s.players.map((p) => p.role));
-        const candidates = Object.values(this.roles)
-          .filter((r) => r.team === TEAM.TOWNSFOLK && !inPlay.has(r.id));
-        this._requestDecision({
-          type: "setup-drunk",
-          seat: drunk.seat,
-          roleId: "drunk",
-          title: "选择酒鬼的伪装身份",
-          detail: `${drunk.name} 是酒鬼,他将自认为是一个不在场的村民角色并按其行动(但没有真实能力)。当前随机选择为【${roleNameFor(this.script, drunk.believedRole)}】。`,
-          options: candidates.map((r) => ({
-            label: `${r.name}${r.id === drunk.believedRole ? "(默认)" : ""}`,
-            value: { roleId: r.id }
-          })),
-          defaultIndex: Math.max(0, candidates.findIndex((r) => r.id === drunk.believedRole)),
-          resume: { kind: "setup", step: "drunk" }
-        });
+    for (const step of this.behaviors.setupSteps || []) {
+      if (s.setupFlags[step.id]) continue;
+      const req = step.build(this.ctx);
+      if (req) {
+        this._requestDecision({ ...req, resume: { kind: "setup", step: step.id } });
         return true;
       }
-      s.setupFlags.drunk = true;
-    }
-
-    if (!s.setupFlags.redHerring) {
-      // 酒鬼伪装可能刚被改成占卜师,此时场上尚无红鲱鱼,一并在此裁定
-      const ft = s.players.find((p) => effectiveRole(p) === "fortuneteller");
-      if (ft) {
-        const current = s.players.find((p) => p.redHerring) || null;
-        const goods = s.players.filter((p) => p.alignment === "good");
-        this._requestDecision({
-          type: "setup-redherring",
-          seat: ft.seat,
-          roleId: "fortuneteller",
-          title: "选择占卜师的红鲱鱼",
-          detail:
-            "一名善良玩家将永远被占卜师的能力误判为恶魔(可以是占卜师本人)。" +
-            (current ? `当前随机选择为 ${current.name}。` : ""),
-          options: goods.map((p) => ({
-            label: `${p.name}${current && p.seat === current.seat ? "(默认)" : ""}${p.seat === ft.seat ? "(占卜师本人)" : ""}`,
-            value: { seat: p.seat }
-          })),
-          defaultIndex: Math.max(0, goods.findIndex((p) => current && p.seat === current.seat)),
-          resume: { kind: "setup", step: "redHerring" }
-        });
-        return true;
-      }
-      s.setupFlags.redHerring = true;
+      s.setupFlags[step.id] = true;
     }
     return false;
   }
@@ -251,12 +268,13 @@ export class GameEngine {
       }
     }
 
-    // 构建夜间行动队列(按官方顺序;酒鬼按其自认为的角色入队)
+    // 构建夜间行动队列(按剧本顺序;伪装身份者按其自认为的角色入队)
     const order = isFirst ? this.script.nightOrder.first : this.script.nightOrder.other;
     s.nightQueue = [];
     for (const roleId of order) {
+      const rb = this._roleBehavior(roleId);
       for (const p of s.players) {
-        if (effectiveRole(p) === roleId && (p.alive || roleId === "ravenkeeper")) {
+        if (effectiveRole(p) === roleId && (p.alive || (rb && rb.queueWhenDead))) {
           s.nightQueue.push({ seat: p.seat, roleId });
         }
       }
@@ -285,7 +303,7 @@ export class GameEngine {
           roleId: step.roleId,
           targets: role.targets || 1,
           notSelf: !!role.notSelf,
-          prompt: this._nightPrompt(step.roleId)
+          prompt: role.prompt || "选择目标"
         };
         return;
       }
@@ -299,29 +317,9 @@ export class GameEngine {
   }
 
   _shouldWake(player, roleId) {
-    const s = this.state;
-    // 守鸦人:只有当夜死亡才醒来
-    if (roleId === "ravenkeeper") {
-      return player.diedTonight;
-    }
-    if (!player.alive) return false;
-    // 猩红夫人夜间位其实是"变身检查",在死亡结算时处理,夜里不唤醒
-    if (roleId === "scarletwoman") return false;
-    // 小恶魔首夜不杀人(队列里不会有,防御性判断)
-    if (roleId === "imp" && s.night === 1) return false;
-    return true;
-  }
-
-  _nightPrompt(roleId) {
-    const prompts = {
-      poisoner: "选择一名玩家下毒",
-      monk: "选择一名玩家保护(不能是自己)",
-      fortuneteller: "选择两名玩家,占卜他们之中是否有恶魔",
-      butler: "选择一名玩家作为你的主人",
-      imp: "选择一名玩家杀死(选择自己则传位给爪牙)",
-      ravenkeeper: "你死了!选择一名玩家,得知他的真实角色"
-    };
-    return prompts[roleId] || "选择目标";
+    const wake = this._roleHook(roleId, "shouldWake");
+    if (wake) return !!wake(this.ctx, player);
+    return player.alive;
   }
 
   _handleNightAction({ seat, targets }) {
@@ -340,191 +338,47 @@ export class GameEngine {
     s.pendingAction = null;
     const paused = this._resolveChoiceRole(player, pa.roleId, list);
     if (!paused) {
-      s.nightIndex++;
-      this._advanceNight();
+      this._resumeNight();
     }
     return { ok: true };
   }
 
   /** 结算需要选择目标的角色。返回 true 表示挂起等待说书人裁定。 */
   _resolveChoiceRole(player, roleId, targets) {
-    const s = this.state;
-    const corrupt = this._isCorrupt(player);
-    const real = hasRealAbility(player) && effectiveRole(player) === player.role;
-
-    switch (roleId) {
-      case "poisoner": {
-        const target = s.players[targets[0]];
-        if (!corrupt && real) target.poisonedBy = player.seat;
-        this._tell(player.seat, `你对 ${target.name} 下了毒`, "action");
-        break;
-      }
-      case "monk": {
-        const target = s.players[targets[0]];
-        if (!corrupt && real) target.protectedBy = player.seat;
-        this._tell(player.seat, `你今晚保护了 ${target.name}`, "action");
-        break;
-      }
-      case "fortuneteller": {
-        if (this._stManual()) {
-          return this._requestInfoDecision(player, "fortuneteller", corrupt || !real, targets);
-        }
-        const info = fortuneTellerInfo(s.players, player, targets, corrupt || !real, this.rng, this.script);
-        this._tell(player.seat, info.text);
-        break;
-      }
-      case "butler": {
-        const target = s.players[targets[0]];
-        player.master = target.seat;
-        this._tell(player.seat, `你选择了 ${target.name} 作为主人,明天只有他投票你才能投票`, "action");
-        break;
-      }
-      case "imp": {
-        return this._impKill(player, targets[0]);
-      }
-      case "ravenkeeper": {
-        if (this._stManual()) {
-          return this._requestInfoDecision(player, "ravenkeeper", corrupt || !real, targets);
-        }
-        const info = ravenkeeperInfo(s.players, targets[0], corrupt || !real, this.rng, this.script);
-        this._tell(player.seat, info.text);
-        break;
-      }
-      default:
-        break;
-    }
-    return false;
+    const fn = this._roleHook(roleId, "resolveNightChoice");
+    if (!fn) return false;
+    return fn(this.ctx, player, targets) === true;
   }
 
   /** 结算自动信息角色。返回 true 表示挂起等待说书人裁定。 */
   _resolveInfoRole(player, roleId) {
-    const s = this.state;
-    const corrupt = this._isCorrupt(player) || !hasRealAbility(player) || effectiveRole(player) !== player.role;
-
-    // 非 auto 模式:可裁量的信息交给说书人选择
-    if (this._stManual() && roleId !== "spy") {
-      if (roleId === "undertaker" && s.executedToday == null) return false;
-      return this._requestInfoDecision(player, roleId, corrupt, null);
-    }
-
-    const gen = {
-      washerwoman: () => washerwomanInfo(s.players, player, corrupt, this.rng, this.script),
-      librarian: () => librarianInfo(s.players, player, corrupt, this.rng, this.script),
-      investigator: () => investigatorInfo(s.players, player, corrupt, this.rng, this.script),
-      chef: () => chefInfo(s.players, player, corrupt, this.rng, this.script),
-      empath: () => empathInfo(s.players, player, corrupt, this.rng, this.script),
-      undertaker: () => {
-        // 夜晚开始前,executedToday 保存的是刚结束的白天的处决
-        if (s.executedToday == null) return null;
-        return undertakerInfo(s.players, s.executedToday, corrupt, this.rng, this.script);
-      },
-      spy: () => (corrupt ? null : spyGrimoire(s.players, this.script))
-    };
-    const fn = gen[roleId];
-    if (!fn) return;
-    const info = fn();
-    if (info) this._tell(player.seat, info.text);
+    const fn = this._roleHook(roleId, "resolveNightInfo");
+    if (!fn) return false;
+    return fn(this.ctx, player) === true;
   }
 
-  /**
-   * 小恶魔杀人(含自杀传位、士兵/僧侣/镇长/猩红夫人交互)。
-   * 返回 true 表示挂起等待说书人裁定(传位继承/镇长替死)。
-   */
-  _impKill(imp, targetSeat) {
-    const s = this.state;
-    const corrupt = this._isCorrupt(imp);
-    let target = s.players[targetSeat];
-    this._tell(imp.seat, `你选择了杀死 ${target.name}`, "action");
-
-    if (corrupt) return false; // 中毒的恶魔杀不死人
-    if (this._safeFromDemon(target)) return false;
-
-    // 自杀传位:一名存活爪牙变成小恶魔(优先猩红夫人)
-    if (targetSeat === imp.seat) {
-      this._kill(imp.seat, "demon-suicide");
-      const minions = this._alive().filter((p) => this.roles[p.role].team === TEAM.MINION);
-      if (!minions.length) {
-        this._checkWin("demon-suicide");
-        return false;
-      }
-      if (this._stManual() && minions.length > 1) {
-        const swIndex = minions.findIndex((p) => p.role === "scarletwoman" && p.poisonedBy == null);
-        this._requestDecision({
-          type: "star-pass",
-          seat: imp.seat,
-          roleId: "imp",
-          title: "小恶魔自杀:选择传位的爪牙",
-          detail: "小恶魔杀死了自己,一名存活爪牙将变成新的小恶魔。官方惯例:清醒的猩红夫人优先。",
-          options: minions.map((p) => ({
-            label: `${p.name}(${this.roles[p.role].name})${p.poisonedBy != null ? "(中毒)" : ""}`,
-            value: { seat: p.seat }
-          })),
-          defaultIndex: swIndex >= 0 ? swIndex : 0,
-          resume: { kind: "star-pass" }
-        });
-        return true;
-      }
-      const heir = minions.find((p) => p.role === "scarletwoman" && p.poisonedBy == null) || this.rng.pick(minions);
-      this._makeHeir(heir);
-      this._checkWin("demon-suicide");
-      return false;
-    }
-
-    // 镇长替死:说书人可裁定;自动模式下用启发式随机转移
-    if (target.role === "mayor" && !this._isCorrupt(target)) {
-      if (s.mayorRedirectSeat !== undefined) {
-        if (s.mayorRedirectSeat === null) return false;
-        const redirected = s.players[s.mayorRedirectSeat];
-        if (redirected) target = redirected;
-        s.mayorRedirectSeat = undefined;
-      } else if (this._stManual()) {
-        const others = this._alive().filter((p) => p.seat !== target.seat && p.seat !== imp.seat);
-        this._requestDecision({
-          type: "mayor-redirect",
-          seat: target.seat,
-          roleId: "mayor",
-          title: "镇长被恶魔袭击:是否转移死亡",
-          detail: `恶魔选择杀死镇长 ${target.name}。按镇长能力,你可以让另一名玩家代替他死亡(士兵免疫与僧侣保护仍然生效)。`,
-          options: [
-            { label: `不转移,${target.name} 承受袭击`, value: { seat: target.seat } },
-            ...others.map((p) => ({ label: `转移给 ${p.name}`, value: { seat: p.seat } }))
-          ],
-          defaultIndex: 0,
-          resume: { kind: "imp-kill-final", impSeat: imp.seat }
-        });
-        return true;
-      } else if (this.rng.chance(0.5)) {
-        const others = this._alive().filter((p) => p.seat !== target.seat && p.seat !== imp.seat);
-        if (others.length) target = this.rng.pick(others);
-      }
-    }
-
-    this._impKillFinal(target.seat);
-    return false;
+  /** 推进夜间队列到下一位(角色结算或裁定恢复后调用) */
+  _resumeNight() {
+    this.state.nightIndex++;
+    this._advanceNight();
   }
 
-  /** 恶魔袭击的最终结算(士兵/保护判定) */
-  _impKillFinal(targetSeat) {
+  /* ---------------- 恶魔击杀管线 ---------------- */
+
+  /** 目标是否免受恶魔袭击(免疫类被动 + 保护状态) */
+  _safeFromDemon(target) {
+    if (!target || !target.alive) return true;
+    const immune = this._roleHook(target.role, "immuneToDemon");
+    if (immune && immune(this.ctx, target)) return true;
+    return target.protectedBy != null;
+  }
+
+  /** 恶魔袭击的最终结算(免疫/保护判定) */
+  _demonKillFinal(targetSeat) {
     const target = this.state.players[targetSeat];
     if (this._safeFromDemon(target)) return;
     if (!target.alive) return; // 死人不能再死
     this._kill(target.seat, "demon");
-  }
-
-  _safeFromDemon(target) {
-    if (!target || !target.alive) return true;
-    if (target.role === "soldier" && !this._isCorrupt(target)) return true;
-    return target.protectedBy != null;
-  }
-
-  /** 爪牙变身为小恶魔 */
-  _makeHeir(heir) {
-    for (const p of this.state.players) {
-      if (p.poisonedBy === heir.seat) p.poisonedBy = null;
-    }
-    heir.role = "imp";
-    heir.believedRole = null;
-    this._tell(heir.seat, "小恶魔死亡,你变成了新的小恶魔!");
   }
 
   /** 通用死亡处理 */
@@ -539,16 +393,10 @@ export class GameEngine {
 
     if (cause === "demon-suicide") return; // 传位流程自行处理变身与胜负判定
 
-    // 猩红夫人:恶魔死亡且存活>=5 → 变身(处决/杀手场景;夜间自杀已单独处理)
-    if (this.roles[player.role].team === TEAM.DEMON) {
-      if (aliveBeforeDeath >= 5) {
-        const sw = this._alive().find((p) => p.role === "scarletwoman" && p.poisonedBy == null);
-        if (sw) {
-          sw.role = "imp";
-          sw.believedRole = null;
-          this._tell(sw.seat, "恶魔死亡,你变成了新的小恶魔!");
-        }
-      }
+    // 死亡反应 hook(如猩红夫人在恶魔死亡时变身)
+    for (const p of this._alive()) {
+      const fn = this._roleHook(p.role, "onDeath");
+      if (fn) fn(this.ctx, p, { dead: player, cause, aliveBeforeDeath });
     }
 
     this._checkWin(cause, player);
@@ -582,7 +430,7 @@ export class GameEngine {
 
   _handleNominate({ nominator, nominee }) {
     const s = this.state;
-    if (s.phase !== "day" || !["discussion", "whispers", "nominations"].includes(s.dayStage)) {
+    if (s.phase !== "day" || !DAY_ACTION_STAGES.includes(s.dayStage)) {
       return { ok: false, error: "现在不能提名" };
     }
     // 有说书人主持时,何时开放提名由说书人决定
@@ -601,40 +449,12 @@ export class GameEngine {
     s.nominatedToday.push(nominee);
     this._log(`${nom.name} 提名了 ${target.name}`, "nomination");
 
-    // 圣女:首次被村民提名 → 提名者立刻被处决
-    if (
-      target.role === "virgin" && !target.usedAbility && target.alive &&
-      !this._isCorrupt(target)
-    ) {
-      target.usedAbility = true;
-      // 非 auto 模式:间谍提名圣女时,注册结果由说书人裁定;其余角色注册无歧义
-      if (this._stManual() && nom.role === "spy") {
-        this._requestDecision({
-          type: "virgin-check",
-          seat: target.seat,
-          roleId: "virgin",
-          title: "间谍提名圣女:注册裁定",
-          detail: `${nom.name}(间谍) 提名了圣女 ${target.name}。若间谍此刻注册为村民,提名者将被立刻处决;否则无事发生。`,
-          options: [
-            { label: "间谍注册为村民:提名者被处决", value: { triggers: true } },
-            { label: "间谍注册为爪牙:无事发生", value: { triggers: false } }
-          ],
-          defaultIndex: 0,
-          resume: { kind: "virgin", nominator, nominee }
-        });
-        return { ok: true, pendingStoryteller: true };
-      }
-      const triggers = this._stManual()
-        ? this.roles[nom.role].team === TEAM.TOWNSFOLK
-        : registrationOf(nom, this.rng, this.script).team === TEAM.TOWNSFOLK;
-      if (triggers) {
-        this._log(`${nom.name} 提名圣女,被立刻处决!`, "execution");
-        this._execute(nom.seat);
-        this._nightfall();
-        return { ok: true, virginTriggered: true };
-      }
+    // 被提名者的被动反应(如圣女);返回真值表示已接管流程(处决/挂起裁定)
+    const onNominated = this._roleHook(target.role, "onNominated");
+    if (onNominated) {
+      const res = onNominated(this.ctx, nom, target);
+      if (res) return res;
     }
-    if (target.role === "virgin" && !target.usedAbility) target.usedAbility = true;
 
     this._beginVote(nominator, nominee);
     return { ok: true };
@@ -667,19 +487,10 @@ export class GameEngine {
     if (up === "master-up") cv.masterIntent = true;
     let effective = up === "master-up" ? true : !!up;
 
-    // 管家:主人正在投票、已经赞成、或尚未被计票但声明赞成时,管家可投票
-    if (
-      effective && voter.alive && voter.role === "butler" &&
-      voter.master != null && !this._isCorrupt(voter)
-    ) {
-      const masterIndex = cv.order.indexOf(voter.master);
-      const masterAlreadyVoted = cv.votes[voter.master] === true;
-      const masterIsCurrent = cv.order[cv.index] === voter.master;
-      const masterWillVoteLater = masterIndex > cv.index && cv.masterIntent === true;
-      if (!(masterAlreadyVoted || masterIsCurrent || masterWillVoteLater)) {
-        effective = false;
-        this._tell(seat, "你的主人没有投票,你的投票无效");
-      }
+    // 投票限制类被动(如管家):由角色 hook 判定本票是否有效
+    if (effective && voter.alive) {
+      const modify = this._roleHook(voter.role, "modifyVote");
+      if (modify) effective = modify(this.ctx, voter, cv) !== false;
     }
 
     cv.votes[seat] = effective;
@@ -722,60 +533,11 @@ export class GameEngine {
     s.dayStage = "nominations";
   }
 
-  /* ---------------- 白天:杀手/结束白天 ---------------- */
-
-  _handleSlayerShot({ seat, target }) {
-    const s = this.state;
-    if (s.phase !== "day" || !["discussion", "whispers", "nominations"].includes(s.dayStage)) return { ok: false, error: "现在不能使用能力" };
-    const player = s.players[seat];
-    const victim = s.players[target];
-    if (!player.alive) return { ok: false, error: "死亡的玩家不能使用能力" };
-    if (player.slayerUsed) return { ok: false, error: "你已经用过这个能力了" };
-    // 任何玩家都可以"声称"杀手开枪 — 但只有真杀手有效
-    player.slayerUsed = true;
-    this._log(`${player.name} 声称杀手,对 ${victim.name} 开枪!`, "slayer");
-
-    const isRealSlayer = player.role === "slayer" && !this._isCorrupt(player);
-
-    // 非 auto 模式:隐士被真杀手射击时,注册结果由说书人裁定
-    if (isRealSlayer && victim.alive && this._stManual()) {
-      if (victim.role === "recluse") {
-        this._requestDecision({
-          type: "slayer-shot",
-          seat: player.seat,
-          roleId: "slayer",
-          title: "杀手射击隐士:注册裁定",
-          detail: `杀手 ${player.name} 对隐士 ${victim.name} 开枪。若隐士此刻注册为恶魔,他将死亡;否则无事发生。`,
-          options: [
-            { label: "隐士注册为外来者:无事发生", value: { dies: false } },
-            { label: "隐士误注册为恶魔:死亡", value: { dies: true } }
-          ],
-          defaultIndex: 0,
-          resume: { kind: "slayer", target: victim.seat }
-        });
-        return { ok: true, pendingStoryteller: true };
-      }
-      if (this.roles[victim.role].team === TEAM.DEMON) {
-        this._log(`${victim.name} 死亡!`, "death");
-        this._kill(target, "slayer");
-      } else {
-        this._log("什么都没有发生……");
-      }
-      return { ok: true };
-    }
-
-    if (isRealSlayer && victim.alive && registersAsDemon(victim, this.rng, this.script)) {
-      this._log(`${victim.name} 死亡!`, "death");
-      this._kill(target, "slayer");
-    } else {
-      this._log("什么都没有发生……");
-    }
-    return { ok: true };
-  }
+  /* ---------------- 白天:结束白天 ---------------- */
 
   _handleEndDay() {
     const s = this.state;
-    if (s.phase !== "day" || !["discussion", "whispers", "nominations"].includes(s.dayStage)) return { ok: false, error: "现在不能结束白天" };
+    if (s.phase !== "day" || !DAY_ACTION_STAGES.includes(s.dayStage)) return { ok: false, error: "现在不能结束白天" };
 
     if (s.onBlock && s.onBlock.seat != null) {
       const victim = s.players[s.onBlock.seat];
@@ -783,12 +545,12 @@ export class GameEngine {
       this._execute(victim.seat);
     } else {
       this._log("今天没有人被处决。");
-      // 镇长胜利:三人存活且无处决
-      if (!s.winner && this._alive().length === 3) {
-        const mayor = this._alive().find((p) => p.role === "mayor" && !this._isCorrupt(p));
-        if (mayor) {
-          this._win("good", "只剩三名玩家存活且无人被处决,镇长带领善良阵营获胜!");
-          return { ok: true };
+      // 无处决黄昏的被动 hook(如镇长胜利)
+      if (!s.winner) {
+        for (const p of this._alive()) {
+          const fn = this._roleHook(p.role, "onDuskNoExecution");
+          if (fn) fn(this.ctx, p);
+          if (s.winner) return { ok: true };
         }
       }
     }
@@ -804,18 +566,14 @@ export class GameEngine {
     this._beginNight();
   }
 
-  /** 处决(含圣徒判定)。不负责入夜,由调用方决定。 */
+  /** 处决(含处决反应类被动,如圣徒)。不负责入夜,由调用方决定。 */
   _execute(seat) {
     const s = this.state;
     const player = s.players[seat];
     s.executedToday = seat;
 
-    // 圣徒被处决 → 邪恶获胜(清醒时)
-    if (player.role === "saint" && !this._isCorrupt(player)) {
-      player.alive = false;
-      this._win("evil", `圣徒 ${player.name} 被处决,邪恶阵营获胜!`);
-      return;
-    }
+    const fn = this._roleHook(player.role, "onExecuted");
+    if (fn && fn(this.ctx, player)) return; // hook 已处理(如圣徒落败)
     this._kill(seat, "execution");
   }
 
@@ -896,66 +654,26 @@ export class GameEngine {
   /** 应用裁定结果并恢复被挂起的流程 */
   _applyStDecision(d, opt) {
     const s = this.state;
-    const resumeNight = () => {
-      s.nightIndex++;
-      this._advanceNight();
-    };
+    const kind = d.resume && d.resume.kind;
 
-    switch (d.resume.kind) {
-      case "setup": {
-        s.setupFlags = s.setupFlags || {};
-        if (d.resume.step === "drunk") {
-          s.players[d.seat].believedRole = opt.value.roleId;
-          s.setupFlags.drunk = true;
-        } else if (d.resume.step === "redHerring") {
-          for (const p of s.players) p.redHerring = false;
-          s.players[opt.value.seat].redHerring = true;
-          s.setupFlags.redHerring = true;
-        }
-        if (!this._requestSetupDecision()) this._nightSetupAndQueue();
-        break;
-      }
-      case "night-info": {
-        this._tell(d.seat, opt.value.text);
-        resumeNight();
-        break;
-      }
-      case "star-pass": {
-        const heir = s.players[opt.value.seat];
-        if (heir && heir.alive) this._makeHeir(heir);
-        this._checkWin("demon-suicide");
-        if (!s.winner) resumeNight();
-        break;
-      }
-      case "imp-kill-final": {
-        this._impKillFinal(opt.value.seat);
-        if (!s.winner) resumeNight();
-        break;
-      }
-      case "virgin": {
-        const { nominator, nominee } = d.resume;
-        if (opt.value.triggers) {
-          this._log(`${s.players[nominator].name} 提名圣女,被立刻处决!`, "execution");
-          this._execute(nominator);
-          if (!s.winner) this._nightfall();
-        } else {
-          this._beginVote(nominator, nominee);
-        }
-        break;
-      }
-      case "slayer": {
-        const victim = s.players[d.resume.target];
-        if (opt.value.dies && victim.alive) {
-          this._log(`${victim.name} 死亡!`, "death");
-          this._kill(victim.seat, "slayer");
-        } else {
-          this._log("什么都没有发生……");
-        }
-        break;
-      }
-      default:
-        break;
+    // 通用恢复:设置期步骤 / 夜间信息
+    if (kind === "setup") {
+      s.setupFlags = s.setupFlags || {};
+      const step = (this.behaviors.setupSteps || []).find((x) => x.id === d.resume.step);
+      if (step) step.apply(this.ctx, d, opt.value);
+      s.setupFlags[d.resume.step] = true;
+      if (!this._requestSetupDecision()) this._nightSetupAndQueue();
+      return;
     }
+    if (kind === "night-info") {
+      this._tell(d.seat, opt.value.text);
+      this._resumeNight();
+      return;
+    }
+
+    // 剧本角色裁量点的恢复逻辑由剧本提供
+    const handler = this.behaviors.resumeHandlers && this.behaviors.resumeHandlers[kind];
+    if (handler) handler(this.ctx, d, opt);
   }
 
   /* ---------------- 说书人控制 ---------------- */
@@ -999,13 +717,6 @@ export class GameEngine {
     return { ok: true };
   }
 
-  _handleStorytellerResolveMayor({ redirectSeat }) {
-    this.state.mayorRedirectSeat = redirectSeat == null ? null : Number(redirectSeat);
-    const label = redirectSeat == null ? "无人替死" : this.state.players[redirectSeat]?.name || redirectSeat;
-    this._note(`镇长夜间死亡转移裁定:${label}`, "mayor");
-    return { ok: true };
-  }
-
   _handleStorytellerAdvancePhase({ stage, durationMs = 0 }) {
     const s = this.state;
     if (s.pendingStorytellerDecision) return { ok: false, error: "请先完成待裁定事项" };
@@ -1015,7 +726,7 @@ export class GameEngine {
     }
     if (s.phase !== "day") return { ok: false, error: "当前不能推进白天阶段" };
     if (stage === "nightfall") return this._handleEndDay();
-    const allowed = new Set(["discussion", "whispers", "nominations"]);
+    const allowed = new Set(DAY_ACTION_STAGES);
     if (!allowed.has(stage)) return { ok: false, error: "未知阶段" };
     s.dayStage = stage;
     s.dayStageEndsAt = durationMs > 0 ? Date.now() + durationMs : null;

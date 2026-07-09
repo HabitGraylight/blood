@@ -96,21 +96,9 @@ export function assignRoles(players, rng, fixedRoles, scriptOrId) {
     };
   });
 
-  // 酒鬼伪装:选一个不在场上的村民角色
-  const drunkSeat = seats.find((s) => s.role === "drunk");
-  if (drunkSeat) {
-    const inPlay = new Set(seats.map((s) => s.role));
-    const candidates = scriptRolesByTeam(script, TEAM.TOWNSFOLK)
-      .map((r) => r.id)
-      .filter((id) => !inPlay.has(id));
-    drunkSeat.believedRole = rng.pick(candidates);
-  }
-
-  // 占卜师红鲱鱼:一名善良玩家永久被误判为恶魔,可包括占卜师自己
-  const ftSeat = seats.find((s) => effectiveRole(s) === "fortuneteller");
-  if (ftSeat) {
-    const goodSeats = seats.filter((s) => s.alignment === "good");
-    if (goodSeats.length) rng.pick(goodSeats).redHerring = true;
+  // 剧本的设置期处理(如酒鬼伪装身份、占卜师红鲱鱼)
+  if (script.behaviors && typeof script.behaviors.finalizeSetup === "function") {
+    script.behaviors.finalizeSetup(seats, rng, script);
   }
 
   return seats;
@@ -121,7 +109,9 @@ export function effectiveRole(player) {
   return player.believedRole || player.role;
 }
 
-/** 玩家真实是否拥有该角色能力(酒鬼没有任何能力) */
-export function hasRealAbility(player) {
-  return player.role !== "drunk";
+/** 玩家真实是否拥有该角色能力(角色定义 noAbility: true 表示没有,如酒鬼) */
+export function hasRealAbility(player, scriptOrId) {
+  const script = resolveScript(scriptOrId);
+  const def = script.roles[player.role];
+  return !(def && def.noAbility);
 }
