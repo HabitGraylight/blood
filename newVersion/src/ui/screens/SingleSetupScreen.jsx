@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { AVAILABLE_SCRIPTS, getSetupForScript, DEFAULT_SCRIPT_ID } from "../../scripts/registry.js";
 import { ScriptSelect } from "../components/ScriptSelect.jsx";
+import { ScriptRoleReference } from "../components/ScriptRoleReference.jsx";
 
 export function SingleSetupScreen({ onStart, onBack }) {
   const [name, setName] = useState("我");
@@ -19,6 +20,7 @@ export function SingleSetupScreen({ onStart, onBack }) {
         <ScriptSelect scripts={AVAILABLE_SCRIPTS} value={scriptId} onChange={setScriptId} />
       </div>
       <p className="hint">{script.summary}</p>
+      <ScriptRoleReference script={script} />
       <label className="field">
         <span>你的名字</span>
         <input value={name} maxLength={8} onChange={(e) => setName(e.target.value)} />
@@ -77,5 +79,4 @@ export function SingleSetupScreen({ onStart, onBack }) {
     </div>
   );
 }
-
 

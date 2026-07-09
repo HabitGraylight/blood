@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { TownSquare } from "../components/TownSquare.jsx";
 import { RoleCard } from "../components/RoleCard.jsx";
+import { ScriptRoleReference } from "../components/ScriptRoleReference.jsx";
 import { ChatPanel } from "../components/ChatPanel.jsx";
 import { VoteBanner } from "../components/VoteBanner.jsx";
 import { NightPanel } from "../components/NightPanel.jsx";
@@ -207,6 +208,7 @@ export function GameScreen({ session, onLeave }) {
       <div className="game-body">
         <aside className="left-panel">
           {isSpectator ? <SpectatorCard view={view} /> : <RoleCard view={view} />}
+          <ScriptRoleReference scriptId={view.scriptId} />
         </aside>
 
         <main className="center-panel">

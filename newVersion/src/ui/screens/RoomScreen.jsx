@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { getScript } from "../../scripts/registry.js";
 import { Icon } from "../components/Icon.jsx";
+import { ScriptRoleReference } from "../components/ScriptRoleReference.jsx";
 
 /** 联机房间大厅:等待玩家、房主补 AI、开始游戏 */
 export function RoomScreen({ session, onGameStart, onLeave }) {
@@ -13,6 +15,7 @@ export function RoomScreen({ session, onGameStart, onLeave }) {
   }, [session.status, onGameStart]);
 
   const players = session.getLobbyPlayers();
+  const script = getScript(session.scriptId);
   const isAI = session.storytellerMode === "ai";
   const storytellerIsHost = session.storytellerUid === session.uid;
 
@@ -25,7 +28,8 @@ export function RoomScreen({ session, onGameStart, onLeave }) {
   return (
     <div className="setup-screen panel">
       <h2>房间 <span className="room-code">{session.code}</span></h2>
-      <p className="hint">剧本: {session.scriptId}. 需要 5-15 名玩家(可用 AI 补足)。</p>
+      <p className="hint">剧本: {script.name} ({script.englishName}). 需要 {script.minPlayers}-{script.maxPlayers} 名玩家(可用 AI 补足)。</p>
+      <ScriptRoleReference script={script} />
 
       {/* 说书人信息栏 */}
       <div className="st-control-bar">

@@ -2,6 +2,7 @@
 import { FirebaseHostSession, FirebaseGuestSession } from "../../session/firebaseSession.js";
 import { AVAILABLE_SCRIPTS, DEFAULT_SCRIPT_ID } from "../../scripts/registry.js";
 import { ScriptSelect } from "../components/ScriptSelect.jsx";
+import { ScriptRoleReference } from "../components/ScriptRoleReference.jsx";
 
 export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
   const defaultName = user?.displayName || (user?.email ? user.email.split("@")[0] : "");
@@ -57,6 +58,7 @@ export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
             <ScriptSelect scripts={AVAILABLE_SCRIPTS} value={scriptId} onChange={setScriptId} />
           </div>
           <p className="hint">{script.summary}</p>
+          <ScriptRoleReference script={script} />
           <p className="hint">你将成为房主,可在等待房间中设置说书人(自己/其他玩家/AI)。请保持页面开启。</p>
           <button className="btn primary" disabled={busy} onClick={create}>创建房间</button>
         </div>
@@ -77,5 +79,4 @@ export function MultiLobbyScreen({ onEnterRoom, onBack, user }) {
     </div>
   );
 }
-
 
