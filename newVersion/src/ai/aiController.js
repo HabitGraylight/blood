@@ -55,14 +55,32 @@ export class AIPlayer {
     }
   }
 
-  /** 白天结束后更新长期记忆(LLM 不可用或低预算档时静默跳过) */
+  /** 白天结束后更新推理档案(LLM 不可用或低预算档时静默跳过) */
   async updateMemo(view, chatHistory) {
     if (llmBudgetTier() === "low") return;
     const result = await this._ask(view, memoPrompt(view, chatHistory, this.memo), {
-      maxTokens: 250,
-      temperature: 0.4
+      maxTokens: 700,
+      temperature: 0.3
     });
-    if (result && typeof result.memo === "string" && result.memo.trim()) {
+    if (!result) return;
+    // 新格式:按座位的结构化推理档案
+    if (result.players && typeof result.players === "object" && !Array.isArray(result.players)) {
+      const players = {};
+      for (const [k, v] of Object.entries(result.players)) {
+        if (typeof v === "string" && v.trim()) players[k] = v.trim().slice(0, 80);
+      }
+      if (Object.keys(players).length) {
+        this.memo = {
+          updatedDay: view.day,
+          players,
+          self: typeof result.self === "string" ? result.self.trim().slice(0, 80) : "",
+          plan: typeof result.plan === "string" ? result.plan.trim().slice(0, 100) : ""
+        };
+        return;
+      }
+    }
+    // 兼容旧格式回复
+    if (typeof result.memo === "string" && result.memo.trim()) {
       this.memo = { summary: result.memo.trim().slice(0, 400), updatedDay: view.day };
     }
   }

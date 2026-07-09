@@ -8,7 +8,8 @@
  * - prompts/ai-player/public-chat.md  公开发言任务模板
  * - prompts/roles/{roleId}.md     角色专属策略;缺失时用 default.md
  */
-import { roleName } from "../scripts/trouble-brewing.js";
+import { roleName, TEAM_LABELS } from "../scripts/trouble-brewing.js";
+import { getScript } from "../scripts/registry.js";
 
 // Vite 在构建时把 markdown 内容内联进来
 const roleDocs = import.meta.glob("../../prompts/roles/*.md", {
@@ -41,14 +42,66 @@ const RULES_BRIEF = `《血染钟楼·暗流涌动》规则要点:
 
 const REASONING_BRIEF = `【推理工作流】发言前在心里完成,不要把步骤逐条输出:
 1. 事实抽取:先列出每名玩家的公开身份声明、能力信息、投票/提名、否认或改口,只使用上下文中出现过的内容。
-2. 约束合并:把“二选一/至少一人/没有命中/确认某角色”等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
-3. 假设分支:分别考虑“这条信息真”“这条信息假或受误导”“说话者在撒谎”三种分支,不要只挑对自己方便的一支。
-4. 反证检查:结论出手前,检查它是否与已公开身份、已死亡名单、自己此前发言或最新回应冲突。
-5. 置信表达:证据链完整时可以明确推动;只有部分线索时用怀疑、追问或条件句;邪恶玩家可以撒谎,但谎言也要自洽。`;
+2. 声称审计:把每个人声称的角色对照【剧本角色表】——角色名不在表里、或把能力说错(比如说"厨师能保护人"),这是重大邪恶信号,应当公开质疑;再对照【人数配置】数一数各类声称数量,外来者声称超编几乎说明男爵在场。
+3. 约束合并:把“二选一/至少一人/没有命中/确认某角色”等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
+4. 假设分支:分别考虑“这条信息真”“这条信息假或受误导”“说话者在撒谎”三种分支,不要只挑对自己方便的一支。
+5. 死亡线索:恶魔倾向夜杀信息型角色。某人公开关键信息后当晚被杀,他的信息可信度上升;自称信息位却一直活到残局、从不被刀的人反而更可疑。
+6. 反证检查:结论出手前,检查它是否与已公开身份、已死亡名单、自己此前发言或最新回应冲突。
+7. 置信表达:证据链完整时可以明确推动;只有部分线索时用怀疑、追问或条件句;邪恶玩家可以撒谎,但谎言也要自洽。`;
+
+/** 剧本角色速查表:AI 识破假角色/假能力声称的依据 */
+function scriptRolesBrief(view) {
+  const script = getScript(view.scriptId);
+  const byTeam = new Map();
+  for (const r of Object.values(script.roles)) {
+    if (!byTeam.has(r.team)) byTeam.set(r.team, []);
+    byTeam.get(r.team).push(`${r.name}(${r.ability})`);
+  }
+  const lines = [`【剧本角色表】《${script.name}》全部角色。有人声称的角色不在此表、或能力描述与此不符,几乎可以断定他在撒谎:`];
+  for (const [team, roles] of byTeam) {
+    lines.push(`- ${TEAM_LABELS[team]}: ${roles.join(" / ")}`);
+  }
+  return lines.join("\n");
+}
+
+/** 人数配置与外来者核算 */
+function compositionBrief(view) {
+  const script = getScript(view.scriptId);
+  const n = view.seats.length;
+  const t = script.setupTable && script.setupTable[n];
+  if (!t) return "";
+  return [
+    `【人数配置】${n}人局标准配置: 村民${t.townsfolk}、外来者${t.outsider}、爪牙${t.minion}、恶魔${t.demon}。`,
+    `若男爵在场则改为: 村民${t.townsfolk - 2}、外来者${t.outsider + 2}。推理时数一数场上声称的外来者(酒鬼被处决前不会自称酒鬼,要靠排除):声称外来者的人数超过标准配置,几乎说明男爵在场;反之若男爵已被证实,场上就应该有${t.outsider + 2}个外来者位,自称村民的人里必然混着外来者或说谎者。`
+  ].join("\n");
+}
 
 /** 对玩家展示的座位号统一为 1 号起(与游戏界面一致);引擎内部仍是 0 起 */
 function seatNo(seat) {
   return seat + 1;
+}
+
+/**
+ * 渲染 AI 的推理档案(结构化长期记忆)。
+ * 新格式: { updatedDay, players: {座位号: 一行描述}, self, plan }
+ * 兼容旧格式: { updatedDay, summary }
+ */
+function renderMemo(view, memo) {
+  if (!memo) return "";
+  if (memo.players && typeof memo.players === "object") {
+    const lines = [`【你的推理档案(你自己维护的工作记忆,截至第${memo.updatedDay}天)】`];
+    for (const s of view.seats) {
+      const note = memo.players[String(seatNo(s.seat))] || memo.players[seatNo(s.seat)];
+      if (note) lines.push(`- ${seatNo(s.seat)}号 ${s.name}${s.alive ? "" : "(已死)"}: ${String(note).slice(0, 80)}`);
+    }
+    if (memo.self) lines.push(`- 你自己的声称/承诺: ${String(memo.self).slice(0, 80)}`);
+    if (memo.plan) lines.push(`- 你的计划与首要怀疑: ${String(memo.plan).slice(0, 100)}`);
+    return lines.length > 1 ? lines.join("\n") : "";
+  }
+  if (memo.summary) {
+    return `【你的长期记忆(截至第${memo.updatedDay}天,聊天记录之外的重要事实)】\n${memo.summary}`;
+  }
+  return "";
 }
 
 function seatLine(s) {
@@ -63,6 +116,31 @@ function stageAdvice(view) {
   if (alive <= 4) return "残局:每一票都决定胜负。善良应公开全部信息拼死推理;邪恶要争取误导最后的处决。";
   if (view.day <= 1) return "第一天:信息还少。信息型角色通常先观察、少暴露;可试探他人口风,注意谁急于带节奏。";
   return "中期:开始交叉验证各方声明,揪出前后矛盾;掌握关键信息的善良角色可考虑公开换取信任。";
+}
+
+/**
+ * 关键数字与残局警告:全部在代码里算好,不依赖模型心算。
+ * 只剩两名存活玩家时邪恶获胜,因此 3 人局的白天就是善良最后的机会。
+ */
+function tempoBrief(view) {
+  const alive = view.seats.filter((s) => s.alive).length;
+  const execLine = Math.ceil(alive / 2);
+  const lines = [`【关键数字】存活 ${alive} 人;处决需要至少 ${execLine} 票且为当日最高票。场上只剩 2 名存活玩家时邪恶立即获胜。`];
+  if (alive === 3) {
+    lines.push(
+      "【终局警告】只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会;逐一核对存活 3 人的身份声称——谁的角色/能力说辞对不上剧本、谁的信息链无人佐证、谁一直没被恶魔刀,谁就最可能是恶魔。不要因为某人发言混乱就投他,酒鬼和隐士本来就会混乱;要投的是逻辑上最可能是恶魔的人。"
+    );
+  } else if (alive === 4) {
+    lines.push(
+      "【残局警告】只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会,必须把票投给最可能是恶魔的人,而不是最吵的人。"
+    );
+  } else if (alive === 5) {
+    lines.push("【节奏提醒】只剩 5 人。若今天不处决,入夜再死 1 人就进入 4 人残局,善良容错只剩一次。");
+  }
+  if (view.phase === "day" && alive > 5) {
+    lines.push("【节奏提醒】白天的处决是善良阵营唯一的主动进攻手段;一天不处决,等于白送邪恶一个夜晚。处决可疑者哪怕错了,也能换来死亡信息(如送葬者查验、声称对错的验证)。");
+  }
+  return lines.join("\n");
 }
 
 const CLAIM_PATTERNS = [
@@ -131,6 +209,10 @@ export function buildSystemPrompt(view, persona, memo = null) {
     "",
     RULES_BRIEF,
     "",
+    scriptRolesBrief(view),
+    "",
+    compositionBrief(view),
+    "",
     REASONING_BRIEF,
     "",
     `【你的座位】你是 ${seatNo(view.seat)}号玩家「${view.name}」(座位号从1开始,与座位表一致)`,
@@ -165,9 +247,8 @@ export function buildSystemPrompt(view, persona, memo = null) {
     );
   }
 
-  if (memo && memo.summary) {
-    lines.push("", `【你的长期记忆(截至第${memo.updatedDay}天,聊天记录之外的重要事实)】`, memo.summary);
-  }
+  const memoBlock = renderMemo(view, memo);
+  if (memoBlock) lines.push("", memoBlock);
 
   lines.push("", `【性格设定】${persona || "冷静理性,善于观察"}`);
   return lines.filter((l) => l !== null && l !== undefined && l !== "").join("\n");
@@ -199,18 +280,26 @@ export function buildSituation(view, chatHistory) {
       )
     );
   }
+  lines.push(tempoBrief(view));
   const recentLog = view.log.slice(-15);
   lines.push("【公开事件】", ...recentLog.map((l) => `- ${l.text}`));
   const claimSummary = buildPublicClaimSummary(view, chatHistory);
   if (claimSummary) lines.push(claimSummary);
   if (chatHistory && chatHistory.length) {
     lines.push(
-      "【最近发言】(按时间顺序,最后一条是最新发言;发言人前的编号即其座位号)",
-      ...chatHistory.slice(-40).map(
-        (c) => `${c.fromSeat != null ? `${c.fromSeat + 1}号 ` : ""}${c.fromName}${c.to != null ? "(私聊你)" : ""}: ${c.text}`
-      )
+      "【最近发言】(按时间顺序,最后一条是最新发言;发言人前的编号即其座位号;标注“(你自己)”的是你说过的话)",
+      ...chatHistory.slice(-40).map((c) => {
+        const isSelf = c.fromSeat === view.seat;
+        const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}${isSelf ? "(你自己)" : ""}`;
+        const dm = c.to == null ? "" : isSelf ? `(你私聊${seatNo(c.to)}号)` : "(私聊你)";
+        return `${who}${dm}: ${c.text}`;
+      })
     );
   }
+  lines.push(
+    "",
+    `【身份锚点】你是 ${seatNo(view.seat)}号「${view.name}」。上面【最近发言】中只有标注“(你自己)”的才是你说过的话;其他人的发言、计划、身份声称都不是你的,绝不能用第一人称复述。发言时把自己的名字当第三者谈论是致命错误。`
+  );
   return lines.join("\n");
 }
 
@@ -232,10 +321,20 @@ export function speechPrompt(view, chatHistory) {
 }
 
 export function nominationPrompt(view, chatHistory, candidates) {
+  const alive = view.seats.filter((s) => s.alive).length;
+  const hasBlock = view.onBlock && view.onBlock.seat != null;
+  const factionLine = view.you.alignment === "evil"
+    ? "你是邪恶阵营:可以提名善良玩家转移火力或完成关键处决,但注意提名本身会暴露你的立场倾向。"
+    : [
+        "你是善良阵营:白天的处决是善良唯一的主动武器。今天到现在" +
+          (hasBlock ? `台上已有 ${view.seats[view.onBlock.seat].name}。若你认可这个处决目标,可以不提名;若你更怀疑别人,就提名他。` : "还没有人被送上处决台。"),
+        hasBlock ? "" : `如果今天没有任何人被处决,入夜后恶魔照常杀人,存活将从 ${alive} 人继续减少——白白损失一天。除非你有强烈理由(比如需要保护关键身份),否则应当提名你当前最怀疑的人。`
+      ].filter(Boolean).join("\n");
   return [
     buildSituation(view, chatHistory),
     "",
     "现在是提名阶段。你可以提名一名存活玩家送上处决台,或选择不提名。",
+    factionLine,
     `可提名的座位号(从1开始,与座位表一致): ${candidates.map((c) => c + 1).join(", ")}`,
     '只回复 JSON: {"nominate": 座位号或null, "reason": "简短理由"}'
   ].join("\n");
@@ -245,11 +344,20 @@ export function votePrompt(view, chatHistory, voteCtx) {
   const nominee = view.seats[voteCtx.nominee];
   const nominator = view.seats[voteCtx.nominator];
   const votesSoFar = Object.values(voteCtx.votes).filter(Boolean).length;
+  const alive = view.seats.filter((s) => s.alive).length;
+  const execLine = Math.ceil(alive / 2);
+  const endgameLine = alive <= 4
+    ? `【生死投票】只剩 ${alive} 名存活玩家,这次处决很可能直接决定胜负:处决恶魔=善良获胜;处决好人=邪恶马上获胜。先在心里回答“${nominee.name} 是恶魔的概率有多高?场上还有谁更像恶魔?”再投票,不要跟风。`
+    : "";
+  const ghostLine = view.you.alive
+    ? ""
+    : `注意:你已死亡,整局只剩这一张遗书票,投了就没有了。${alive <= 4 ? "现在已是残局,正是用它的时候——但只投给你最确信是恶魔的人。" : "如果你不确定被提名者是恶魔,建议留着这张票到残局再用。"}`;
   return [
     buildSituation(view, chatHistory),
     "",
-    `${nominator.name} 提名了 ${nominee.name},正在依次投票,目前 ${votesSoFar} 票赞成。轮到你举手表决。`,
-    view.you.alive ? "" : "注意:你已死亡,投赞成会用掉唯一的遗书票,慎重!",
+    `${nominator.name} 提名了 ${nominee.name},正在依次投票,目前 ${votesSoFar} 票赞成;处决线是 ${execLine} 票且需超过当日最高票。轮到你举手表决。`,
+    endgameLine,
+    ghostLine,
     '只回复 JSON: {"vote": true或false, "reason": "简短理由"}'
   ].filter(Boolean).join("\n");
 }
@@ -259,6 +367,7 @@ export function whisperPrompt(view, chatHistory, fromName, text) {
     buildSituation(view, chatHistory),
     "",
     `${fromName} 私聊你说:"${text}"。请回复他(20-60字),注意私聊内容其他人看不到,可以交换情报或试探/欺骗。`,
+    "红线:你声称的信息只能来自【你的私密信息】列表,善良阵营不得编造不存在的查验结果;邪恶阵营可以撒谎,但必须与你公开声称的身份和之前说过的话自洽。",
     '只回复 JSON: {"reply": "你的回复"}'
   ].join("\n");
 }
@@ -279,14 +388,18 @@ export function initiateWhisperPrompt(view, chatHistory, target) {
   ].join("\n");
 }
 
-/** 白天结束后的长期记忆更新 */
+/** 白天结束后的推理档案更新(结构化长期记忆) */
 export function memoPrompt(view, chatHistory, memo) {
+  const prev = renderMemo(view, memo);
+  const seatKeys = view.seats.map((s) => `"${seatNo(s.seat)}"`).join(", ");
   return [
     buildSituation(view, chatHistory),
     "",
-    memo && memo.summary ? `【你此前的记忆】${memo.summary}` : "",
-    "这个白天结束了。请把今天的重要情报浓缩进你的长期记忆:1) 谁声称了什么身份/信息 2) 你自己公开承诺或声称过什么 3) 你怀疑谁、为什么 4) 你接下来的计划。合并旧记忆;不要覆盖旧事实,除非聊天中明确有人改口、撤回或被证伪。总长不超过150字。",
-    '只回复 JSON: {"memo": "记忆内容"}'
+    prev ? `【你此前的档案】\n${prev}` : "",
+    "这个白天结束了。请更新你的推理档案:对每名玩家写一行(不超过40字),内容按需包含:声称的角色、报出的关键信息、与其他信息的矛盾、你判断的可信度(高/中/低/确认邪恶等)。",
+    "要求:1) 合并旧档案,不要丢掉旧事实,除非有人明确改口或被证伪(那就记录改口本身,改口是重大嫌疑信号) 2) 记录必须忠实原话,二选一信息不能写成确认 3) self 记你自己公开声称/承诺过的内容,后续发言不能自相矛盾 4) plan 记你明天的计划和当前最怀疑的人及理由。",
+    `只回复一个 JSON 对象,players 的键是座位号(${seatKeys}),值是那名玩家的一行档案。格式示例:`,
+    '{"players": {"1": "声称图书管理员;首夜查到2/8号有隐士;可信度中", "2": "..."}, "self": "你自己的声称与承诺", "plan": "明天的计划与首要怀疑对象"}'
   ].filter(Boolean).join("\n");
 }
 
