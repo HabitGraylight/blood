@@ -125,8 +125,11 @@ export function GameScreen({ session, onLeave }) {
     for (const s of view.seats) {
       if (select.mode === "nominate") {
         if (s.alive && !view.nominatedToday.includes(s.seat)) set.add(s.seat);
-      } else if (select.mode === "slayer") {
-        if (s.alive && s.seat !== view.seat) set.add(s.seat);
+      } else if (select.mode === "dayAction") {
+        const policy = select.action?.targetPolicy || { aliveOnly: true, notSelf: true };
+        if (policy.aliveOnly && !s.alive) continue;
+        if (policy.notSelf && s.seat === view.seat) continue;
+        set.add(s.seat);
       } else if (select.mode === "night") {
         if (select.notSelf && s.seat === view.seat) continue;
         set.add(s.seat);
@@ -134,7 +137,6 @@ export function GameScreen({ session, onLeave }) {
     }
     return set;
   }, [view, select]);
-
   const onSeatClick = useCallback(
     (seat) => {
       if (!select || !selectableSeats.has(seat)) return;
@@ -153,22 +155,20 @@ export function GameScreen({ session, onLeave }) {
     const picked = select.picked;
     let res;
     if (select.mode === "night") {
-      if (picked.length !== (select.max || 1)) {
-        showToast("需要选择 " + select.max + " 名玩家");
-        return;
-      }
+      if (picked.length !== (select.max || 1)) return showToast(`需要选择 ${select.max} 名玩家`);
       res = session.nightAction(picked);
     } else if (select.mode === "nominate") {
       if (picked.length !== 1) return showToast("请选择一名玩家");
       res = session.nominate(picked[0]);
-    } else if (select.mode === "slayer") {
-      if (picked.length !== 1) return showToast("请选择一名玩家");
-      res = session.slayerShot(picked[0]);
+    } else if (select.mode === "dayAction") {
+      const count = select.action?.targetPolicy?.count || 1;
+      if (picked.length !== count) return showToast("请选择目标玩家");
+      const fn = session[select.action.actionType];
+      res = typeof fn === "function" ? fn.call(session, picked[0]) : { error: "未知行动" };
     }
     if (res && res.error) showToast(res.error);
     else setSelect(null);
   }, [select, session, showToast]);
-
   if (!view) {
     return (
       <div className="game-loading">
@@ -260,6 +260,7 @@ function SpectatorCard({ view }) {
   );
 }
 /** 白天操作按钮区 */
+/** 白天操作按钮区 */
 function ActionBar({ view, session, select, setSelect, confirmSelection, showToast }) {
   if (view.phase !== "day") return null;
 
@@ -271,17 +272,14 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
   }
 
   if (inSelection) {
+    const label = select.mode === "nominate" ? "提名" : (select.action?.confirmLabel || "行动");
     return (
       <div className="action-bar">
         <span className="hint">
-          {select.mode === "nominate"
-            ? "点击广场上的玩家进行提名"
-            : view.you.role === "slayer"
-              ? "点击你要射击的玩家"
-              : "点击目标玩家。你不是真杀手时开枪不会有效果，但可以试探或伪装身份。"}
+          {select.mode === "nominate" ? "点击广场上的玩家进行提名" : (select.action?.hint || "点击目标玩家")}
         </span>
         <button className="btn primary" disabled={!select.picked.length} onClick={confirmSelection}>
-          确认{select.mode === "nominate" ? "提名" : "开枪"}
+          确认{label}
         </button>
         <button className="btn ghost" onClick={() => setSelect(null)}>取消</button>
       </div>
@@ -295,16 +293,15 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
           <Icon name="nominate" /> 提名
         </button>
       )}
-      {view.canSlay && view.you.alive && (view.you.role === "slayer" ? (
-        <button className="btn" onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}>
-          <Icon name="slayer" /> 杀手开枪        </button>
-      ) : (
+      {(view.availableDayActions || []).map((action) => (
         <button
-          className="btn ghost bluff-btn"
-          title="任何玩家都可以公开声称自己是杀手并开枪。你不是真杀手时不会有效果，但可以借此试探或伪装身份。"
-          onClick={() => setSelect({ mode: "slayer", picked: [], max: 1 })}
+          key={action.actionType}
+          className={"btn " + (action.roleId && view.you.role !== action.roleId ? "ghost bluff-btn" : "")}
+          title={action.hint || action.label}
+          onClick={() => setSelect({ mode: "dayAction", action, picked: [], max: action.targetPolicy?.count || 1 })}
         >
-          <Icon name="slayer" /> 声称杀手        </button>
+          <Icon name={action.icon || "action"} /> {action.label}
+        </button>
       ))}
       {(session.isHost || view.isStoryteller) && view.canEndDay && (
         <button
@@ -323,11 +320,3 @@ function ActionBar({ view, session, select, setSelect, confirmSelection, showToa
     </div>
   );
 }
-
-
-
-
-
-
-
-

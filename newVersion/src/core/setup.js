@@ -2,15 +2,8 @@
  * 游戏设置:按剧本人数配置表抽取角色并发牌。
  * 处理设置修正、酒鬼伪装身份、占卜师红鲱鱼等脚本内规则。
  */
-import { getScript, TEAM } from "../scripts/registry.js";
-
-function resolveScript(scriptOrId) {
-  return scriptOrId && scriptOrId.roles ? scriptOrId : getScript(scriptOrId);
-}
-
-function scriptRolesByTeam(script, team) {
-  return Object.values(script.roles).filter((r) => r.team === team);
-}
+import { TEAM, resolveScript, rolesByTeam } from "../scripts/registry.js";
+import { getBelievedRole, normalizePlayer } from "./state.js";
 
 /** 计算实际身份分布(应用男爵等设置修正) */
 export function resolveComposition(playerCount, chosenRoles = [], scriptOrId) {
@@ -40,18 +33,18 @@ export function drawRoles(playerCount, rng, scriptOrId) {
 
   // 先抽爪牙:若抽到男爵,应用 +2 外来者修正
   const minions = rng
-    .shuffle(scriptRolesByTeam(script, TEAM.MINION).map((r) => r.id))
+    .shuffle(rolesByTeam(script, TEAM.MINION).map((r) => r.id))
     .slice(0, composition.minion);
   const withMod = resolveComposition(playerCount, minions, script);
 
   const townsfolk = rng
-    .shuffle(scriptRolesByTeam(script, TEAM.TOWNSFOLK).map((r) => r.id))
+    .shuffle(rolesByTeam(script, TEAM.TOWNSFOLK).map((r) => r.id))
     .slice(0, withMod.townsfolk);
   const outsiders = rng
-    .shuffle(scriptRolesByTeam(script, TEAM.OUTSIDER).map((r) => r.id))
+    .shuffle(rolesByTeam(script, TEAM.OUTSIDER).map((r) => r.id))
     .slice(0, withMod.outsider);
   const demons = rng
-    .shuffle(scriptRolesByTeam(script, TEAM.DEMON).map((r) => r.id))
+    .shuffle(rolesByTeam(script, TEAM.DEMON).map((r) => r.id))
     .slice(0, withMod.demon || 1);
 
   return {

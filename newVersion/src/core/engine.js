@@ -11,17 +11,17 @@
  * 契约见 scripts/trouble-brewing-behaviors.js 顶部说明;引擎通过 _buildBehaviorContext
  * 暴露给行为模块的上下文 API 也在本文件中定义。
  */
-import { getScript, TEAM } from "../scripts/registry.js";
+import { getScript, TEAM, roleName as scriptRoleName } from "../scripts/registry.js";
 import { assignRoles, effectiveRole, hasRealAbility } from "./setup.js";
 import { createRng, randomSeed } from "./rng.js";
 import {
   minionFirstNightInfo, demonFirstNightInfo, buildNightInfoOptions
 } from "./info.js";
 import { checkWin, resolveVoteResult } from "./rules.js";
+import { DAY_ACTION_STAGES, isDayActionable } from "./constants.js";
+import { hasStatus, normalizeGameState, setPoisonedBy, setProtectedBy } from "./state.js";
 
-function roleNameFor(script, roleId) { return script.roles[roleId] ? script.roles[roleId].name : roleId; }
-
-const DAY_ACTION_STAGES = ["discussion", "whispers", "nominations"];
+function roleNameFor(script, roleId) { return scriptRoleName(script, roleId); }
 
 export class GameEngine {
   constructor(state, rng) {
@@ -29,6 +29,7 @@ export class GameEngine {
     this.script = getScript(state.scriptId);
     this.roles = this.script.roles;
     this.behaviors = this.script.behaviors || { roles: {} };
+    normalizeGameState(this.state);
     this.ctx = this._buildBehaviorContext();
     if (rng) {
       this.rng = rng;
@@ -198,7 +199,7 @@ export class GameEngine {
 
   _isCorrupt(player) {
     // 中毒或本身没有真实能力(如酒鬼) → 能力失效/得到假信息
-    return player.poisonedBy != null || !hasRealAbility(player, this.script);
+    return hasStatus(player, "poisoned") || player.poisonedBy != null || !hasRealAbility(player, this.script);
   }
 
   /** 非 auto 模式:裁量点交给说书人(人类或 AI)决定 */
@@ -216,10 +217,10 @@ export class GameEngine {
     s.nightKills = [];
     for (const p of s.players) {
       p.diedTonight = false;
-      p.protectedBy = null;
+      setProtectedBy(p, null);
     }
     // 中毒持续到黄昏后清除,已在 _beginDay 末尾处理;此处清除上一夜的毒(投毒者每夜重新选择)
-    for (const p of s.players) p.poisonedBy = null;
+    for (const p of s.players) setPoisonedBy(p, null);
 
     const isFirst = s.night === 1;
     this._log(isFirst ? "第一个夜晚降临,所有人闭上眼睛……" : `第 ${s.night} 个夜晚降临……`);
@@ -370,7 +371,7 @@ export class GameEngine {
     if (!target || !target.alive) return true;
     const immune = this._roleHook(target.role, "immuneToDemon");
     if (immune && immune(this.ctx, target)) return true;
-    return target.protectedBy != null;
+    return hasStatus(target, "protectedFromDemon") || target.protectedBy != null;
   }
 
   /** 恶魔袭击的最终结算(免疫/保护判定) */
@@ -430,7 +431,7 @@ export class GameEngine {
 
   _handleNominate({ nominator, nominee }) {
     const s = this.state;
-    if (s.phase !== "day" || !DAY_ACTION_STAGES.includes(s.dayStage)) {
+    if (!isDayActionable(s)) {
       return { ok: false, error: "现在不能提名" };
     }
     // 有说书人主持时,何时开放提名由说书人决定
@@ -537,7 +538,7 @@ export class GameEngine {
 
   _handleEndDay() {
     const s = this.state;
-    if (s.phase !== "day" || !DAY_ACTION_STAGES.includes(s.dayStage)) return { ok: false, error: "现在不能结束白天" };
+    if (!isDayActionable(s)) return { ok: false, error: "现在不能结束白天" };
 
     if (s.onBlock && s.onBlock.seat != null) {
       const victim = s.players[s.onBlock.seat];

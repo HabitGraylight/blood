@@ -356,7 +356,7 @@ export class AIDriver {
         try {
           if (item.kind === "speak") await this._doPlannedSpeech(item);
           else if (item.kind === "whisper") await this._doPlannedWhisper(item);
-          else if (item.kind === "slayer") await this._doPlannedSlayerShot(item);
+          else if (item.kind === "dayAction") await this._doPlannedDayAction(item);
         } finally {
           plan.busy = false;
           if (!this.disposed) this.tick();
@@ -521,7 +521,7 @@ export class AIDriver {
   }
 
   /** 计划中的杀手开枪考虑:决定开枪就公开宣告并结算 */
-  async _doPlannedSlayerShot(item) {
+  async _doPlannedDayAction(item) {
     await delay(this._paceGap(0.8));
     if (this.disposed) return;
     const quiet = await this._waitForHumanQuiet({
@@ -531,14 +531,15 @@ export class AIDriver {
     });
     if (!quiet || this.disposed) return;
     const view = this._viewOf(item.seat);
-    if (!view.canSlay || !view.you.alive || view.you.slayerUsed) return;
+    const action = item.action || (view.availableDayActions || []).find((a) => a.actionType === "slayerShot");
+    if (!action || !view.you.alive) return;
     const ai = this.aiPlayers.get(item.seat);
     const target = await ai.decideSlayerShot(view, this.getChatFor(item.seat));
     if (target == null || this.disposed) return;
     const st = this.engine.state;
     if (st.phase !== "day" || !st.players[item.seat].alive || !st.players[target]?.alive) return;
     this._say(item.seat, `我是杀手,我对 ${st.players[target].name} 开枪!`, null);
-    this._dispatch({ type: "slayerShot", seat: item.seat, target });
+    this._dispatch({ type: action.actionType, seat: item.seat, target });
   }
 
   /** 计划中的主动私聊(邪恶协调/社交串联);对象是 AI 时附带一轮回复 */

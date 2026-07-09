@@ -1,11 +1,7 @@
 /**
  * 核心规则判定:胜负条件与投票结果。独立成模块以便单元测试。
  */
-import { getScript, TEAM } from "../scripts/registry.js";
-
-function resolveScript(scriptOrId) {
-  return scriptOrId && scriptOrId.roles ? scriptOrId : getScript(scriptOrId);
-}
+import { TEAM, resolveScript } from "../scripts/registry.js";
 
 /**
  * 检查是否有一方获胜。

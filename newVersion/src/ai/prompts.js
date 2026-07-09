@@ -8,8 +8,7 @@
  * - prompts/ai-player/public-chat.md  公开发言任务模板
  * - prompts/roles/{roleId}.md     角色专属策略;缺失时用 default.md
  */
-import { roleName, TEAM_LABELS } from "../scripts/trouble-brewing.js";
-import { getScript } from "../scripts/registry.js";
+import { getScript, roleName as scriptRoleName, TEAM_LABELS } from "../scripts/registry.js";
 
 // Vite 在构建时把 markdown 内容内联进来
 const roleDocs = import.meta.glob("../../prompts/roles/*.md", {
@@ -33,16 +32,19 @@ function roleDoc(roleId) {
 const PLAYER_SYSTEM = (playerDocs["../../prompts/ai-player/system.md"] || "").trim();
 const PUBLIC_CHAT_TEMPLATE = (playerDocs["../../prompts/ai-player/public-chat.md"] || "").trim();
 
-const RULES_BRIEF = `《血染钟楼·暗流涌动》规则要点:
-- 村民和外来者属于善良阵营;爪牙和恶魔属于邪恶阵营。
-- 恶魔(小恶魔)每晚杀一人(首夜除外)。恶魔死亡则善良获胜;场上只剩两名存活玩家则邪恶获胜。
-- 白天所有人讨论,可以提名;得票达到存活人数一半且高于当日最高票者,黄昏时被处决。
-- 死亡玩家仍可说话,保留最后一次投票机会(遗书票)。
-- 信息可能是假的:中毒、酒鬼、间谍误导、隐士误判、占卜师的红鲱鱼都会制造假信息。`;
+function rulesBriefForScript(scriptId) {
+  const script = getScript(scriptId);
+  return script.rulesBrief || [
+    `Rules brief for ${script.name}:`,
+    "- Good usually wins by executing the demon; evil usually wins when only two players are alive.",
+    "- Day is for discussion, nominations, and voting; night actions follow the script night order.",
+    "- Information can be unreliable because of abilities, statuses, or storyteller rulings."
+  ].join("\n");
+}
 
 const REASONING_BRIEF = `【推理工作流】发言前在心里完成,不要把步骤逐条输出:
 1. 事实抽取:先列出每名玩家的公开身份声明、能力信息、投票/提名、否认或改口,只使用上下文中出现过的内容。
-2. 声称审计:把每个人声称的角色对照【剧本角色表】——角色名不在表里、或把能力说错(比如说"厨师能保护人"),这是重大邪恶信号,应当公开质疑;再对照【人数配置】数一数各类声称数量,外来者声称超编几乎说明男爵在场。
+2. 声称审计:把每个人声称的角色对照【剧本角色表】——角色名不在表里、或把能力说错(比如说"厨师能保护人"),这是重大邪恶信号,应当公开质疑;再对照【人数配置】数一数各类声称数量,外来者声称超编可能说明有设置修正角色在场。
 3. 约束合并:把“二选一/至少一人/没有命中/确认某角色”等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
 4. 假设分支:分别考虑“这条信息真”“这条信息假或受误导”“说话者在撒谎”三种分支,不要只挑对自己方便的一支。
 5. 死亡线索:恶魔倾向夜杀信息型角色。某人公开关键信息后当晚被杀,他的信息可信度上升;自称信息位却一直活到残局、从不被刀的人反而更可疑。
@@ -66,8 +68,7 @@ function scriptRolesBrief(view) {
   return lines.join("\n");
 }
 
-/** 其它桌游/剧本里常见、但本剧本不存在的角色叫法(AI 和玩家都容易叫错) */
-const FOREIGN_ROLE_WORDS = ["猎手", "大厨", "预言家", "女巫", "守卫", "骑士", "狼人", "先知", "猎人", "白痴", "祖母", "舞蛇人"];
+/** 其它桌游/剧本里常见、但本剧本不存在的角色叫法由脚本数据提供。 */
 
 /**
  * 身份声称对照审计:从公开发言里提取每个人声称过的角色,
@@ -88,7 +89,7 @@ export function buildClaimAudit(view, chatHistory) {
       if (!claims.has(c.fromSeat)) claims.set(c.fromSeat, new Set());
       claims.get(c.fromSeat).add(m[1]);
     }
-    for (const w of FOREIGN_ROLE_WORDS) {
+    for (const w of (script.foreignRoleWords || [])) {
       if (text.includes(w)) {
         if (!foreign.has(c.fromSeat)) foreign.set(c.fromSeat, new Set());
         foreign.get(c.fromSeat).add(w);
@@ -117,12 +118,16 @@ export function buildClaimAudit(view, chatHistory) {
 function compositionBrief(view) {
   const script = getScript(view.scriptId);
   const n = view.seats.length;
-  const t = script.setupTable && script.setupTable[n];
-  if (!t) return "";
-  return [
-    `【人数配置】${n}人局标准配置: 村民${t.townsfolk}、外来者${t.outsider}、爪牙${t.minion}、恶魔${t.demon}。`,
-    `若男爵在场则改为: 村民${t.townsfolk - 2}、外来者${t.outsider + 2}。推理时数一数场上声称的外来者(酒鬼被处决前不会自称酒鬼,要靠排除):声称外来者的人数超过标准配置,几乎说明男爵在场;反之若男爵已被证实,场上就应该有${t.outsider + 2}个外来者位,自称村民的人里必然混着外来者或说谎者。`
-  ].join("\n");
+  const base = script.setupTable && script.setupTable[n];
+  if (!base) return "";
+  const lines = [`【人数配置】${n}人局标准配置: 村民${base.townsfolk}、外来者${base.outsider}、爪牙${base.minion}、恶魔${base.demon}。`];
+  const modifiers = Object.values(script.roles).filter((role) => role.setupModifier);
+  for (const role of modifiers) {
+    const changed = { ...base };
+    for (const [team, delta] of Object.entries(role.setupModifier)) changed[team] = Math.max(0, (changed[team] || 0) + delta);
+    lines.push(`若${role.name}在场则改为: 村民${changed.townsfolk ?? 0}、外来者${changed.outsider ?? 0}、爪牙${changed.minion ?? 0}、恶魔${changed.demon ?? 0}。推理时将公开声称的外来者数量与这些配置对照。`);
+  }
+  return lines.join("\\n");
 }
 
 /** 对玩家展示的座位号统一为 1 号起(与游戏界面一致);引擎内部仍是 0 起 */
@@ -192,20 +197,27 @@ function tempoBrief(view) {
   return lines.join("\n");
 }
 
-const CLAIM_PATTERNS = [
-  { label: "身份声明", re: /我是|我跳|我报|身份|占卜师|厨师|共情者|调查员|图书管理员|洗衣妇|僧侣|隐士|管家|圣女|杀手|猎手|士兵|镇长|送葬者|守鸦人|圣徒|酒鬼|镇民/ },
-  { label: "能力信息", re: /查了|查的|查到|得知|信息|红光|没红光|有恶魔|没有恶魔|有爪牙|好人|坏人|邪恶|善良|两人中|其中/ },
-  { label: "指控/投票", re: /说谎|撒谎|狼|恶魔|爪牙|可疑|假跳|冒充|混子|投|票|提名|处决/ },
-  { label: "否认/改口", re: /没说过|我没说|不是我说|听岔|记错|忘了|改口|撤回|重新说/ }
-];
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
+function claimPatternsFor(view) {
+  const script = getScript(view?.scriptId);
+  const roleWords = Object.values(script.roles).map((r) => escapeRegExp(r.name)).join("|");
+  return [
+    { label: "身份声明", re: new RegExp(`我是|我跳|我报|身份|${roleWords}`) },
+    { label: "能力信息", re: /查了|查的|查到|得知|信息|有恶魔|没有恶魔|有爪牙|好人|坏人|邪恶|善良|两人中|其中/ },
+    { label: "指控/投票", re: /说谎|撒谎|恶魔|爪牙|可疑|假跳|冒充|投票|提名|处决/ },
+    { label: "否认/改口", re: /没说过|我没说|不是我说|听岔|记错|忘了|改口|撤回|重新说/ }
+  ];
+}
 function compactQuote(text, max = 90) {
   const oneLine = String(text || "").replace(/\s+/g, " ").trim();
   return oneLine.length > max ? `${oneLine.slice(0, max)}...` : oneLine;
 }
 
-function claimLabels(text) {
-  return CLAIM_PATTERNS.filter((p) => p.re.test(text)).map((p) => p.label);
+function claimLabels(text, view) {
+  return claimPatternsFor(view).filter((p) => p.re.test(text)).map((p) => p.label);
 }
 
 function playerLabel(c) {
@@ -225,7 +237,7 @@ export function buildPublicClaimSummary(view, chatHistory) {
   let hasPairInfo = false;
 
   for (const c of publicChats) {
-    const labels = claimLabels(c.text || "");
+    const labels = claimLabels(c.text || "", view);
     if (!labels.length) continue;
     if (mentionsPairInfo(c.text || "")) hasPairInfo = true;
     const key = c.fromSeat != null ? c.fromSeat : c.fromName || "?";
@@ -256,7 +268,7 @@ export function buildSystemPrompt(view, persona, memo = null) {
   const lines = [
     `${PLAYER_SYSTEM}`,
     "",
-    RULES_BRIEF,
+    rulesBriefForScript(view.scriptId),
     "",
     scriptRolesBrief(view),
     "",
@@ -284,7 +296,8 @@ export function buildSystemPrompt(view, persona, memo = null) {
         (minions.length ? `;爪牙: ${minions.join("、")}` : "")
     );
     if (you.evilInfo.bluffs && you.evilInfo.bluffs.length) {
-      lines.push(`【可用伪装】这些角色不在场上,可谎称: ${you.evilInfo.bluffs.map(roleName).join("、")}`);
+      const script = getScript(view.scriptId);
+      lines.push(`【可用伪装】这些角色不在场上,可谎称: ${you.evilInfo.bluffs.map((id) => scriptRoleName(script, id)).join("、")}`);
     }
   }
 
@@ -483,7 +496,7 @@ export function memoPrompt(view, chatHistory, memo) {
 const STORYTELLER_SYSTEM = (storytellerDocs["../../prompts/storyteller/system.md"] || "").trim();
 
 export function buildStorytellerSystemPrompt() {
-  return [STORYTELLER_SYSTEM, "", RULES_BRIEF].join("\n");
+  return [STORYTELLER_SYSTEM, "", rulesBriefForScript()].join("\n");
 }
 
 /** 从说书人视角构建完整魔典与局势摘要 */
@@ -498,7 +511,7 @@ export function buildGrimoireSituation(stView) {
       if (s.protectedBy != null) marks.push("被僧侣保护");
       if (s.believedRole) marks.push(`酒鬼,自认为是${s.believedRole}`);
       if (s.redHerring) marks.push("红鲱鱼");
-      return `${s.seat + 1}号 ${s.name}: ${s.roleName}(${s.teamLabel},${s.alignmentLabel})${marks.length ? ` [${marks.join(",")}]` : ""}`;
+      return `${seatNo(s.seat)}号 ${s.name}: ${s.roleName}(${s.teamLabel},${s.alignmentLabel})${marks.length ? ` [${marks.join(",")}]` : ""}`;
     })
   ];
   if (stView.onBlock && stView.onBlock.seat != null) {

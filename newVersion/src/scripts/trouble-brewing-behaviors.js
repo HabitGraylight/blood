@@ -40,13 +40,17 @@
  *
  * ctx 是引擎提供的行为上下文,见 engine.js 的 _buildBehaviorContext。
  */
-import { TEAM } from "./trouble-brewing.js";
+import { TEAM } from "../core/constants.js";
 import {
   washerwomanInfo, librarianInfo, investigatorInfo, chefInfo, empathInfo,
   fortuneTellerInfo, undertakerInfo, ravenkeeperInfo, spyGrimoire,
   registersAsDemon, registrationOf
 } from "../core/info.js";
 import { effectiveRole } from "../core/setup.js";
+import {
+  getMasterSeat, getStatus, hasStatus, isAbilityUsed, setAbilityUsed, setBelievedRole,
+  setMasterSeat, setPoisonedBy, setProtectedBy, setRedHerring
+} from "../core/state.js";
 
 const DAY_ACTION_STAGES = ["discussion", "whispers", "nominations"];
 
@@ -83,10 +87,11 @@ function choiceInfoRole(roleId, generate) {
 /** 爪牙变身为小恶魔(传位)。他此前施加的毒随身份消失。 */
 function makeHeir(ctx, heir) {
   for (const p of ctx.state.players) {
-    if (p.poisonedBy === heir.seat) p.poisonedBy = null;
+    const poison = getStatus(p, "poisoned");
+    if (p.poisonedBy === heir.seat || poison?.sourceSeat === heir.seat) setPoisonedBy(p, null);
   }
   heir.role = "imp";
-  heir.believedRole = null;
+  setBelievedRole(heir, null);
   ctx.tell(heir.seat, "小恶魔死亡,你变成了新的小恶魔!");
 }
 
@@ -126,7 +131,7 @@ const ROLE_BEHAVIORS = {
   monk: {
     resolveNightChoice(ctx, player, targets) {
       const target = ctx.state.players[targets[0]];
-      if (!ctx.isCorrupt(player) && ctx.actsWithTrueAbility(player)) target.protectedBy = player.seat;
+      if (!ctx.isCorrupt(player) && ctx.actsWithTrueAbility(player)) setProtectedBy(target, player.seat, player.role);
       ctx.tell(player.seat, `你今晚保护了 ${target.name}`, "action");
       return false;
     }
@@ -143,8 +148,8 @@ const ROLE_BEHAVIORS = {
   virgin: {
     onNominated(ctx, nominator, virgin) {
       // 首次被村民提名 → 提名者立刻被处决
-      if (!virgin.usedAbility && virgin.alive && !ctx.isCorrupt(virgin)) {
-        virgin.usedAbility = true;
+      if (!isAbilityUsed(virgin, "virgin") && virgin.alive && !ctx.isCorrupt(virgin)) {
+        setAbilityUsed(virgin, "virgin", true);
         // 非 auto 模式:间谍提名圣女时,注册结果由说书人裁定;其余角色注册无歧义
         if (ctx.stManual() && nominator.role === "spy") {
           ctx.requestDecision({
@@ -172,7 +177,7 @@ const ROLE_BEHAVIORS = {
           return { ok: true, virginTriggered: true };
         }
       }
-      if (!virgin.usedAbility) virgin.usedAbility = true;
+      if (!isAbilityUsed(virgin, "virgin")) setAbilityUsed(virgin, "virgin", true);
       return null; // 继续默认投票流程
     }
   },
@@ -227,17 +232,18 @@ const ROLE_BEHAVIORS = {
   butler: {
     resolveNightChoice(ctx, player, targets) {
       const target = ctx.state.players[targets[0]];
-      player.master = target.seat;
+      setMasterSeat(player, target.seat);
       ctx.tell(player.seat, `你选择了 ${target.name} 作为主人,明天只有他投票你才能投票`, "action");
       return false;
     },
 
     /** 管家:主人正在投票、已经赞成、或尚未被计票但声明赞成时,管家可投票 */
     modifyVote(ctx, voter, cv) {
-      if (voter.master == null || ctx.isCorrupt(voter)) return true;
-      const masterIndex = cv.order.indexOf(voter.master);
-      const masterAlreadyVoted = cv.votes[voter.master] === true;
-      const masterIsCurrent = cv.order[cv.index] === voter.master;
+      const masterSeat = getMasterSeat(voter);
+      if (masterSeat == null || ctx.isCorrupt(voter)) return true;
+      const masterIndex = cv.order.indexOf(masterSeat);
+      const masterAlreadyVoted = cv.votes[masterSeat] === true;
+      const masterIsCurrent = cv.order[cv.index] === masterSeat;
       const masterWillVoteLater = masterIndex > cv.index && cv.masterIntent === true;
       if (masterAlreadyVoted || masterIsCurrent || masterWillVoteLater) return true;
       ctx.tell(voter.seat, "你的主人没有投票,你的投票无效");
@@ -258,7 +264,7 @@ const ROLE_BEHAVIORS = {
   poisoner: {
     resolveNightChoice(ctx, player, targets) {
       const target = ctx.state.players[targets[0]];
-      if (!ctx.isCorrupt(player) && ctx.actsWithTrueAbility(player)) target.poisonedBy = player.seat;
+      if (!ctx.isCorrupt(player) && ctx.actsWithTrueAbility(player)) setPoisonedBy(target, player.seat, player.role);
       ctx.tell(player.seat, `你对 ${target.name} 下了毒`, "action");
       return false;
     }
@@ -281,9 +287,9 @@ const ROLE_BEHAVIORS = {
     onDeath(ctx, sw, { dead, aliveBeforeDeath }) {
       if (ctx.roles[dead.role].team !== TEAM.DEMON) return;
       if (aliveBeforeDeath < 5) return;
-      if (sw.poisonedBy != null) return;
+      if (hasStatus(sw, "poisoned") || sw.poisonedBy != null) return;
       sw.role = "imp";
-      sw.believedRole = null;
+      setBelievedRole(sw, null);
       ctx.tell(sw.seat, "恶魔死亡,你变成了新的小恶魔!");
     }
   },
@@ -310,7 +316,7 @@ const ROLE_BEHAVIORS = {
           return false;
         }
         if (ctx.stManual() && minions.length > 1) {
-          const swIndex = minions.findIndex((p) => p.role === "scarletwoman" && p.poisonedBy == null);
+          const swIndex = minions.findIndex((p) => p.role === "scarletwoman" && !hasStatus(p, "poisoned") && p.poisonedBy == null);
           ctx.requestDecision({
             type: "star-pass",
             seat: imp.seat,
@@ -318,7 +324,7 @@ const ROLE_BEHAVIORS = {
             title: "小恶魔自杀:选择传位的爪牙",
             detail: "小恶魔杀死了自己,一名存活爪牙将变成新的小恶魔。官方惯例:清醒的猩红夫人优先。",
             options: minions.map((p) => ({
-              label: `${p.name}(${ctx.roleName(p.role)})${p.poisonedBy != null ? "(中毒)" : ""}`,
+              label: `${p.name}(${ctx.roleName(p.role)})${hasStatus(p, "poisoned") || p.poisonedBy != null ? "(中毒)" : ""}`,
               value: { seat: p.seat }
             })),
             defaultIndex: swIndex >= 0 ? swIndex : 0,
@@ -326,7 +332,7 @@ const ROLE_BEHAVIORS = {
           });
           return true;
         }
-        const heir = minions.find((p) => p.role === "scarletwoman" && p.poisonedBy == null) || ctx.rng.pick(minions);
+        const heir = minions.find((p) => p.role === "scarletwoman" && !hasStatus(p, "poisoned") && p.poisonedBy == null) || ctx.rng.pick(minions);
         makeHeir(ctx, heir);
         ctx.checkWin("demon-suicide");
         return false;
@@ -361,14 +367,14 @@ function finalizeSetup(seats, rng, script) {
       .filter((r) => r.team === TEAM.TOWNSFOLK)
       .map((r) => r.id)
       .filter((id) => !inPlay.has(id));
-    drunkSeat.believedRole = rng.pick(candidates);
+    setBelievedRole(drunkSeat, rng.pick(candidates));
   }
 
   // 占卜师红鲱鱼:一名善良玩家永久被误判为恶魔,可包括占卜师自己
   const ftSeat = seats.find((s) => effectiveRole(s) === "fortuneteller");
   if (ftSeat) {
     const goodSeats = seats.filter((s) => s.alignment === "good");
-    if (goodSeats.length) rng.pick(goodSeats).redHerring = true;
+    if (goodSeats.length) setRedHerring(rng.pick(goodSeats), true);
   }
 }
 
@@ -389,16 +395,16 @@ const SETUP_STEPS = [
         seat: drunk.seat,
         roleId: "drunk",
         title: "选择酒鬼的伪装身份",
-        detail: `${drunk.name} 是酒鬼,他将自认为是一个不在场的村民角色并按其行动(但没有真实能力)。当前随机选择为【${ctx.roleName(drunk.believedRole)}】。`,
+        detail: `${drunk.name} 是酒鬼,他将自认为是一个不在场的村民角色并按其行动(但没有真实能力)。当前随机选择为【${ctx.roleName(effectiveRole(drunk))}】。`,
         options: candidates.map((r) => ({
-          label: `${r.name}${r.id === drunk.believedRole ? "(默认)" : ""}`,
+          label: `${r.name}${r.id === effectiveRole(drunk) ? "(默认)" : ""}`,
           value: { roleId: r.id }
         })),
-        defaultIndex: Math.max(0, candidates.findIndex((r) => r.id === drunk.believedRole))
+        defaultIndex: Math.max(0, candidates.findIndex((r) => r.id === effectiveRole(drunk)))
       };
     },
     apply(ctx, decision, value) {
-      ctx.state.players[decision.seat].believedRole = value.roleId;
+      setBelievedRole(ctx.state.players[decision.seat], value.roleId);
     }
   },
   {
@@ -408,7 +414,7 @@ const SETUP_STEPS = [
       // 酒鬼伪装可能刚被改成占卜师,此时场上尚无红鲱鱼,一并在此裁定
       const ft = s.players.find((p) => effectiveRole(p) === "fortuneteller");
       if (!ft) return null;
-      const current = s.players.find((p) => p.redHerring) || null;
+      const current = s.players.find((p) => hasStatus(p, "redHerring") || p.redHerring) || null;
       const goods = s.players.filter((p) => p.alignment === "good");
       return {
         type: "setup-redherring",
@@ -426,8 +432,8 @@ const SETUP_STEPS = [
       };
     },
     apply(ctx, decision, value) {
-      for (const p of ctx.state.players) p.redHerring = false;
-      ctx.state.players[value.seat].redHerring = true;
+      for (const p of ctx.state.players) setRedHerring(p, false);
+      setRedHerring(ctx.state.players[value.seat], true);
     }
   }
 ];
@@ -442,8 +448,8 @@ const ACTIONS = {
     const player = s.players[seat];
     const victim = s.players[target];
     if (!player.alive) return { ok: false, error: "死亡的玩家不能使用能力" };
-    if (player.slayerUsed) return { ok: false, error: "你已经用过这个能力了" };
-    player.slayerUsed = true;
+    if (isAbilityUsed(player, "slayer")) return { ok: false, error: "你已经用过这个能力了" };
+    setAbilityUsed(player, "slayer", true);
     ctx.log(`${player.name} 声称杀手,对 ${victim.name} 开枪!`, "slayer");
 
     const isRealSlayer = player.role === "slayer" && !ctx.isCorrupt(player);

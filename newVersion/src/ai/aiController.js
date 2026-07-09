@@ -10,7 +10,7 @@ import {
   nominationPrompt, votePrompt, whisperPrompt, memoPrompt,
   initiateWhisperPrompt, slayerShotPrompt
 } from "./prompts.js";
-import { roleName } from "../scripts/trouble-brewing.js";
+import { getScript, roleName as scriptRoleName } from "../scripts/registry.js";
 
 const DEFAULT_TRAITS = { aggr: 0.5, talk: 0.5 };
 
@@ -178,7 +178,8 @@ export class AIPlayer {
 
     if (this._isEvil(view)) {
       const bluffs = (you.evilInfo && you.evilInfo.bluffs) || [];
-      const bluffName = bluffs.length ? roleName(this.rng.pick(bluffs)) : "村民";
+      const script = getScript(view.scriptId);
+      const bluffName = bluffs.length ? scriptRoleName(script, this.rng.pick(bluffs)) : "村民";
       const targets = this._pickTargets(view, 1, { avoidEvilTeam: true, notSelf: true });
       const lines = [
         `我是${bluffName},昨晚没什么特别的信息。`,

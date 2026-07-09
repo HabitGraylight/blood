@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import { GameEngine } from "../src/core/engine.js";
 import { drawRoles } from "../src/core/setup.js";
 import { resolveVoteResult, checkWin } from "../src/core/rules.js";
-import { registrationOf } from "../src/core/info.js";
+import {
+  registrationOf, buildNightInfoCandidates, washerwomanInfo, librarianInfo, investigatorInfo,
+  chefInfo, empathInfo, fortuneTellerInfo, undertakerInfo, ravenkeeperInfo
+} from "../src/core/info.js";
 import { createRng } from "../src/core/rng.js";
 import { ROLES, TEAM, SETUP_TABLE } from "../src/scripts/trouble-brewing.js";
 import { playerView, storytellerView } from "../src/core/view.js";
@@ -691,5 +694,79 @@ describe("说书人裁量(决策挂起)", () => {
       }
       expect(engine.state.winner).toBeTruthy();
     }
+  });
+});
+
+describe("script extensibility invariants", () => {
+  it("hydrates old player fields into roleState and statuses", () => {
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 901,
+      fixedRoles: ["slayer", "chef", "soldier", "baron", "imp"]
+    });
+    autoNight(engine);
+    const snapshot = engine.serialize();
+    snapshot.players[0].roleState = undefined;
+    snapshot.players[0].statuses = undefined;
+    snapshot.players[0].slayerUsed = true;
+    snapshot.players[1].poisonedBy = 3;
+    snapshot.players[2].protectedBy = 1;
+    snapshot.players[3].redHerring = true;
+
+    const restored = GameEngine.hydrate(snapshot);
+
+    expect(restored.state.players[0].roleState.slayer.used).toBe(true);
+    expect(restored.state.players[1].statuses.some((s) => s.kind === "poisoned" && s.sourceSeat === 3)).toBe(true);
+    expect(restored.state.players[2].statuses.some((s) => s.kind === "protectedFromDemon" && s.sourceSeat === 1)).toBe(true);
+    expect(restored.state.players[3].statuses.some((s) => s.kind === "redHerring")).toBe(true);
+    expect(restored.dispatch({ type: "nominate", nominator: 1, nominee: 4 }).ok).toBe(true);
+  });
+
+  it("auto night info is selected from storyteller candidate options", () => {
+    const fixedRoles = [
+      "washerwoman", "librarian", "investigator", "chef", "empath", "fortuneteller",
+      "undertaker", "ravenkeeper", "recluse", "spy", "poisoner", "imp"
+    ];
+    const engine = GameEngine.create(makePlayers(12), { seed: 902, fixedRoles });
+    const players = engine.state.players;
+    const script = engine.script;
+    const cases = [
+      { roleId: "washerwoman", self: players[0], make: (rng) => washerwomanInfo(players, players[0], false, rng, script) },
+      { roleId: "librarian", self: players[1], make: (rng) => librarianInfo(players, players[1], false, rng, script) },
+      { roleId: "investigator", self: players[2], make: (rng) => investigatorInfo(players, players[2], false, rng, script) },
+      { roleId: "chef", self: players[3], make: (rng) => chefInfo(players, players[3], false, rng, script) },
+      { roleId: "empath", self: players[4], make: (rng) => empathInfo(players, players[4], false, rng, script) },
+      { roleId: "fortuneteller", self: players[5], targets: [8, 11], make: (rng) => fortuneTellerInfo(players, players[5], [8, 11], false, rng, script) },
+      { roleId: "undertaker", self: players[6], executedSeat: 8, make: (rng) => undertakerInfo(players, 8, false, rng, script) },
+      { roleId: "ravenkeeper", self: players[7], targets: [9], make: (rng) => ravenkeeperInfo(players, 9, false, rng, script) }
+    ];
+
+    for (let i = 0; i < cases.length; i++) {
+      const c = cases[i];
+      const info = c.make(createRng(1200 + i));
+      const candidates = buildNightInfoCandidates(c.roleId, {
+        players,
+        self: c.self,
+        targets: c.targets,
+        executedSeat: c.executedSeat,
+        corrupt: false,
+        rng: createRng(1200 + i),
+        script
+      });
+      expect(candidates.options.map((o) => o.text)).toContain(info.text);
+    }
+  });
+
+  it("player view exposes script-declared day actions without leaking hidden state", () => {
+    const engine = GameEngine.create(makePlayers(5), {
+      seed: 903,
+      fixedRoles: ["chef", "slayer", "soldier", "baron", "imp"]
+    });
+    autoNight(engine);
+    const chef = playerView(engine.state, 0);
+    const slayer = playerView(engine.state, 1);
+
+    expect(chef.availableDayActions.some((a) => a.actionType === "slayerShot" && a.label)).toBe(true);
+    expect(slayer.availableDayActions.some((a) => a.actionType === "slayerShot" && a.roleId === "slayer")).toBe(true);
+    expect(chef.seats[4].revealedRole).toBe(null);
   });
 });

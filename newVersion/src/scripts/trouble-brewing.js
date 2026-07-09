@@ -3,24 +3,9 @@
  * 纯数据模块:角色定义、夜间行动顺序、人数配置表。
  */
 
-export const TEAM = {
-  TOWNSFOLK: "townsfolk",
-  OUTSIDER: "outsider",
-  MINION: "minion",
-  DEMON: "demon"
-};
+import { TEAM, TEAM_LABELS, ALIGNMENT_LABELS } from "../core/constants.js";
 
-export const TEAM_LABELS = {
-  townsfolk: "村民",
-  outsider: "外来者",
-  minion: "爪牙",
-  demon: "恶魔"
-};
-
-export const ALIGNMENT_LABELS = {
-  good: "善良",
-  evil: "邪恶"
-};
+export { TEAM, TEAM_LABELS, ALIGNMENT_LABELS };
 
 /** 玩家数 -> 各类身份数量 (旅行者不计入) */
 export const SETUP_TABLE = {
@@ -185,6 +170,42 @@ export const ROLES = {
   }
 };
 
+
+ROLES.ravenkeeper.nightHint = "只有当你在夜里死亡时,才会被唤醒查验一名玩家。";
+ROLES.scarletwoman.nightHint = "你的能力是被动的:恶魔死亡且场上仍有至少五名存活玩家时,你会变成新的恶魔。";
+ROLES.baron.nightHint = "你的能力在发牌时已经生效,夜里无需行动。";
+ROLES.imp.skipHints = {
+  firstNight: "首夜是平安夜:恶魔不能杀人。从第二晚开始,每晚选择一名玩家杀死。"
+};
+
+export const DAY_ACTIONS = [
+  {
+    actionType: "slayerShot",
+    roleId: "slayer",
+    icon: "slayer",
+    label: "杀手开枪",
+    bluffLabel: "声称杀手",
+    confirmLabel: "开枪",
+    hint: "点击你要射击的玩家。",
+    bluffHint: "你不是现实杀手时开枪不会有效果,但可以借此试探或伪装身份。",
+    publicClaimable: true,
+    stages: ["discussion", "whispers", "nominations"],
+    onceState: { roleId: "slayer" },
+    targetPolicy: { count: 1, aliveOnly: true, notSelf: true }
+  }
+];
+
+export const RULES_BRIEF = [
+  "《血染钟楼·暗流涌动》规则要点:",
+  "- 村民和外来者属于善良阵营;爪牙和恶魔属于邪恶阵营。",
+  "- 恶魔(小恶魔)每晚杀一人(首夜除外)。恶魔死亡则善良获胜;场上只剩两名存活玩家则邪恶获胜。",
+  "- 白天所有人讨论,可以提名;得票达到存活人数一半且高于当日最高票者,黄昏时被处决。",
+  "- 死亡玩家仍可说话,保留最后一次投票机会(遗书票)。",
+  "- 信息可能是假的:中毒、酒鬼、间谍误导、隐士误判、占卜师的红鲱鱼都会制造假信息。"
+].join("\n");
+
+export const FOREIGN_ROLE_WORDS = ["猎手", "大厨", "预言家", "女巫", "守卫", "骑士", "狼人", "先知", "猎人", "白痴", "祖母", "舞蛇人"];
+
 /** 夜间行动顺序 (官方 TB 顺序,爪牙/恶魔互认信息由引擎在队列前单独处理) */
 export const NIGHT_ORDER = {
   first: [
@@ -210,6 +231,9 @@ export const SCRIPT = {
   roles: ROLES,
   nightOrder: NIGHT_ORDER,
   setupTable: SETUP_TABLE,
+  dayActions: DAY_ACTIONS,
+  rulesBrief: RULES_BRIEF,
+  foreignRoleWords: FOREIGN_ROLE_WORDS,
   iconSet: "trouble-brewing",
   rulesProfile: "trouble-brewing"
 };

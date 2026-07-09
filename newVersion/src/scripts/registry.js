@@ -1,5 +1,6 @@
-import { SCRIPT as TROUBLE_BREWING_DATA, TEAM, TEAM_LABELS, ALIGNMENT_LABELS } from "./trouble-brewing.js";
+import { SCRIPT as TROUBLE_BREWING_DATA } from "./trouble-brewing.js";
 import { TROUBLE_BREWING_BEHAVIORS } from "./trouble-brewing-behaviors.js";
+import { TEAM, TEAM_LABELS, ALIGNMENT_LABELS } from "../core/constants.js";
 
 export const DEFAULT_SCRIPT_ID = "trouble-brewing";
 
@@ -18,6 +19,20 @@ export const AVAILABLE_SCRIPTS = Object.values(SCRIPT_REGISTRY);
 
 export function getScript(scriptId = DEFAULT_SCRIPT_ID) {
   return SCRIPT_REGISTRY[scriptId] || SCRIPT_REGISTRY[DEFAULT_SCRIPT_ID];
+}
+
+export function resolveScript(scriptOrId) {
+  return scriptOrId && scriptOrId.roles ? scriptOrId : getScript(scriptOrId);
+}
+
+export function rolesByTeam(scriptOrId, team) {
+  const script = resolveScript(scriptOrId);
+  return Object.values(script.roles).filter((r) => r.team === team);
+}
+
+export function roleName(scriptOrId, roleId) {
+  const script = resolveScript(scriptOrId);
+  return script.roles[roleId] ? script.roles[roleId].name : roleId;
 }
 
 export function getSetupForScript(scriptId, playerCount) {

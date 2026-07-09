@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildPublicClaimSummary, buildSituation, buildSystemPrompt } from "../src/ai/prompts.js";
 import { AIDriver } from "../src/session/aiDriver.js";
 import { GameEngine } from "../src/core/engine.js";
+import { SCRIPT_REGISTRY, TEAM } from "../src/scripts/registry.js";
 
 function viewStub(seat = 0) {
   return {
@@ -156,5 +157,55 @@ describe("AI 白天节奏计划", () => {
 
     expect(driver.dayPlan.reactBudget).toBe(2);
     expect(driver.scheduled.size).toBe(0);
+  });
+});
+describe("AI prompt script isolation", () => {
+  it("uses the current script instead of Trouble Brewing prompt constants", () => {
+    SCRIPT_REGISTRY["mock-script"] = {
+      id: "mock-script",
+      name: "Mock Script",
+      rulesBrief: "MOCK RULES ONLY",
+      foreignRoleWords: ["ForeignOnly"],
+      setupTable: { 5: { townsfolk: 3, outsider: 0, minion: 1, demon: 1 } },
+      roles: {
+        alpha: { id: "alpha", name: "Alpha", team: TEAM.TOWNSFOLK, ability: "Alpha ability" },
+        beta: { id: "beta", name: "Beta", team: TEAM.OUTSIDER, ability: "Beta ability" },
+        gamma: { id: "gamma", name: "Gamma", team: TEAM.MINION, ability: "Gamma ability" },
+        omega: { id: "omega", name: "Omega", team: TEAM.DEMON, ability: "Omega ability" }
+      }
+    };
+    const view = {
+      scriptId: "mock-script",
+      seat: 0,
+      name: "A",
+      day: 1,
+      phase: "day",
+      seats: [
+        { seat: 0, name: "A", alive: true },
+        { seat: 1, name: "B", alive: true },
+        { seat: 2, name: "C", alive: true },
+        { seat: 3, name: "D", alive: true },
+        { seat: 4, name: "E", alive: true }
+      ],
+      log: [],
+      nominations: [],
+      you: {
+        role: "alpha",
+        roleName: "Alpha",
+        teamLabel: "村民",
+        alignmentLabel: "善良",
+        alignment: "good",
+        ability: "Alpha ability",
+        alive: true,
+        privateLog: []
+      }
+    };
+
+    const prompt = buildSystemPrompt(view, "calm");
+
+    expect(prompt).toContain("MOCK RULES ONLY");
+    expect(prompt).toContain("Alpha ability");
+    expect(prompt).not.toContain("小恶魔");
+    expect(prompt).not.toContain("男爵");
   });
 });
