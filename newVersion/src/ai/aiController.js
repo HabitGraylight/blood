@@ -6,13 +6,51 @@
  */
 import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier } from "./llm.js";
 import {
-  buildSystemPrompt, nightActionPrompt, speechPrompt,
+  buildSystemPrompt, buildSharedSystemBlocks, buildPlayerSystemBlocks,
+  buildPublicChatBlock,
+  nightActionPrompt, speechPrompt,
   nominationPrompt, votePrompt, whisperPrompt, memoPrompt,
   initiateWhisperPrompt, dayActionPrompt
 } from "./prompts.js";
 import { getScript, roleName as scriptRoleName } from "../scripts/registry.js";
 
 const DEFAULT_TRAITS = { aggr: 0.5, talk: 0.5 };
+
+/**
+ * 统一约束校验:游戏规则级别的合法性检查,杜绝 AI 幻觉导致的不合法动作。
+ * 所有 LLM 决策结果在应用前都应通过本函数验证。
+ *
+ * @param {object} view playerView
+ * @param {object} constraints 约束条件
+ * @param {number[]} [constraints.targets] 目标座位数组(0起)
+ * @param {number} [constraints.target] 单一目标座位(0起)
+ * @param {boolean} [constraints.aliveOnly=true] 是否要求目标存活
+ * @param {boolean} [constraints.notSelf=false] 是否禁止选择自己
+ * @returns {boolean} true 表示通过约束校验
+ */
+export function enforceConstraints(view, constraints = {}) {
+  const { targets, target, aliveOnly = true, notSelf = false } = constraints;
+  const aliveSeats = new Set(view.seats.filter((s) => s.alive).map((s) => s.seat));
+
+  if (targets !== undefined) {
+    if (!Array.isArray(targets) || targets.length === 0) return false;
+    for (const t of targets) {
+      const seat = Number(t);
+      if (aliveOnly && !aliveSeats.has(seat)) return false;
+      if (notSelf && seat === view.seat) return false;
+    }
+    return true;
+  }
+
+  if (target !== undefined && target !== null) {
+    const seat = Number(target);
+    if (aliveOnly && !aliveSeats.has(seat)) return false;
+    if (notSelf && seat === view.seat) return false;
+    return true;
+  }
+
+  return true;
+}
 
 export class AIPlayer {
   constructor(seat, persona, rng, opts = {}) {
@@ -30,16 +68,29 @@ export class AIPlayer {
 
   async _ask(view, userPrompt, options = {}) {
     const task = options.task || "unknown";
+    const chatHistory = options.chatHistory || [];
+
+    // 构建分层系统提示:只有 Block1(共享缓存) + Block3(玩家动态)
+    const sharedBlocks = buildSharedSystemBlocks(view, chatHistory);
+    const playerBlocks = buildPlayerSystemBlocks(view, this.persona, this.memo, chatHistory);
+    const systemBlocks = [...sharedBlocks, ...playerBlocks];
+
+    // 当天公开聊天放在 user 消息中(避免 MiniMax 对 system 段严格审核触发 new_sensitive)
+    const chatBlock = buildPublicChatBlock(chatHistory);
+    const fullUserPrompt = chatBlock
+      ? `${chatBlock}\n\n${userPrompt}`
+      : userPrompt;
+
     const messages = [
-      { role: "system", content: buildSystemPrompt(view, this.persona, this.memo) },
-      { role: "user", content: userPrompt }
+      { role: "user", content: fullUserPrompt }
     ];
+
     const logBase = {
       actor: "ai-player",
       seat: this.seat,
       phase: `${view.phase || ""}:${view.dayStage || ""}:N${view.night || 0}:D${view.day || 0}`,
       task,
-      input: messages
+      input: { systemBlocks, messages }
     };
 
     if (!isLLMConfigured()) {
@@ -48,7 +99,7 @@ export class AIPlayer {
     }
 
     try {
-      let text = await chatComplete(messages, options);
+      let text = await chatComplete(messages, { ...options, systemBlocks });
       await this.debugLogger?.record({ ...logBase, output: text });
       let parsed = extractJSON(text);
       if (!parsed) {
@@ -57,8 +108,8 @@ export class AIPlayer {
           { role: "assistant", content: String(text).slice(0, 400) },
           { role: "user", content: "你的回复无法解析。只输出一个 JSON 对象,不要输出任何其他文字。" }
         ];
-        text = await chatComplete(retryMessages, { ...options, temperature: 0.3 });
-        await this.debugLogger?.record({ ...logBase, task: `${task}:parse-retry`, input: retryMessages, output: text });
+        text = await chatComplete(retryMessages, { ...options, systemBlocks, temperature: 0.3 });
+        await this.debugLogger?.record({ ...logBase, task: `${task}:parse-retry`, input: { systemBlocks, messages: retryMessages }, output: text });
         parsed = extractJSON(text);
       }
       return parsed;
@@ -73,6 +124,7 @@ export class AIPlayer {
     const result = await this._ask(view, memoPrompt(view, chatHistory, this.memo), {
       maxTokens: 700,
       temperature: 0.3,
+      chatHistory,
       task: "memo"
     });
     if (!result) return;
@@ -138,7 +190,7 @@ export class AIPlayer {
 
   async decideNightAction(view) {
     const pa = view.pendingAction;
-    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6, task: `night:${pa.roleId}` });
+    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6, chatHistory: [], task: `night:${pa.roleId}` });
     if (result && Array.isArray(result.targets)) {
       // 提示词中的座位号从 1 开始(与界面一致),转回引擎的 0 起座位
       // 只接受存活目标:对死者使用能力等于浪费(LLM 偶尔会忽视死亡标记)
@@ -177,7 +229,7 @@ export class AIPlayer {
   /* ---------------- 白天发言 ---------------- */
 
   async speak(view, chatHistory) {
-    const result = await this._ask(view, speechPrompt(view, chatHistory), { maxTokens: 300, task: "speech" });
+    const result = await this._ask(view, speechPrompt(view, chatHistory), { maxTokens: 300, chatHistory, task: "speech" });
     if (result && typeof result.speech === "string" && result.speech.trim()) {
       return result.speech.trim().slice(0, 200);
     }
@@ -223,7 +275,7 @@ export class AIPlayer {
       .map((s) => s.seat);
     if (!candidates.length) return null;
 
-    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.6, task: "nomination" });
+    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.6, chatHistory, task: "nomination" });
     if (result !== null && "nominate" in result) {
       const n = result.nominate;
       if (n === null) return null;
@@ -255,7 +307,7 @@ export class AIPlayer {
     if (llmBudgetTier() === "low" && !this._isCriticalVote(view, cv)) {
       return this._heuristicVote(view, cv);
     }
-    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200, temperature: 0.55, task: "vote" });
+    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200, temperature: 0.55, chatHistory, task: "vote" });
     if (result && typeof result.vote === "boolean") return result.vote;
     return this._heuristicVote(view, cv);
   }
@@ -296,6 +348,7 @@ export class AIPlayer {
     const result = await this._ask(view, dayActionPrompt(view, chatHistory, candidates, action), {
       maxTokens: 200,
       temperature: 0.4,
+      chatHistory,
       task: `day-action:${action.actionType}`
     });
     if (result && result.target != null) {
@@ -315,6 +368,7 @@ export class AIPlayer {
   async initiateWhisper(view, chatHistory, target) {
     const result = await this._ask(view, initiateWhisperPrompt(view, chatHistory, target), {
       maxTokens: 200,
+      chatHistory,
       task: "whisper:initiate"
     });
     if (result && typeof result.whisper === "string" && result.whisper.trim()) {
@@ -349,6 +403,7 @@ export class AIPlayer {
   async replyWhisper(view, chatHistory, fromName, text) {
     const result = await this._ask(view, whisperPrompt(view, chatHistory, fromName, text), {
       maxTokens: 200,
+      chatHistory,
       task: "whisper:reply"
     });
     if (result && typeof result.reply === "string" && result.reply.trim()) {

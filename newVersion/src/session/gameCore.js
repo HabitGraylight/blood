@@ -12,6 +12,7 @@ import { AIDriver } from "./aiDriver.js";
 import { createRng, randomSeed } from "../core/rng.js";
 import { resetLLMBudget } from "../ai/llm.js";
 import { AIDebugLogger } from "../ai/debugLogger.js";
+import { summarizeDay } from "../ai/summarizer.js";
 
 export class GameCore {
   constructor(players, onUpdate, options = {}) {
@@ -21,6 +22,8 @@ export class GameCore {
     this.chatSeq = options.snapshot?.chatSeq || this.chat.reduce((max, c) => Math.max(max, c.id || 0), 0);
     // 人类说书人可开启"AI 托管裁定"(运行时开关,不入存档)
     this.stAutopilot = false;
+    // 摘要防重入:记录上次已摘要的夜晚编号
+    this._lastSummarizedNight = options.snapshot?._lastSummarizedNight || 0;
     // 存档恢复时还原各 AI 的长期记忆
     this._savedMemos = options.snapshot?.aiMemos || null;
     const debugSnapshot = options.snapshot?.aiDebugLog || {};
@@ -207,6 +210,7 @@ export class GameCore {
       this.driver.noteHumanActivity(); // 真人操作(提名/投票等)会延缓说书人推进阶段
       this.onUpdate();
       this.driver.tick();
+      this._trySummarizeDay();
     }
     return res;
   }
@@ -231,8 +235,37 @@ export class GameCore {
     if (res.ok) {
       this.onUpdate();
       this.driver.tick();
+      this._trySummarizeDay();
     }
     return res;
+  }
+
+  /**
+   * 白天结束→夜晚时,异步触发每日摘要 Agent。
+   * 防重入:同一 night 编号只摘要一次。不阻塞游戏推进,失败静默跳过。
+   */
+  _trySummarizeDay() {
+    const s = this.engine.state;
+    if (s.phase !== "night" || s.night <= this._lastSummarizedNight || s.night < 2) return;
+    this._lastSummarizedNight = s.night;
+
+    const dayIndex = s.day; // 刚结束的白天编号
+    const seatNames = s.players.map((p) => p.name);
+
+    // 仅公开事件(排除 storyteller 类型)
+    const publicEvents = s.log.filter((l) => l.day === dayIndex && l.type !== "storyteller");
+    // 仅当天公开发言
+    const publicChats = this.chat.filter((c) => c.to == null && c.day === dayIndex);
+
+    // 异步触发,不阻塞游戏推进
+    summarizeDay(publicEvents, publicChats, seatNames, dayIndex).then((text) => {
+      if (text && !this.disposed) {
+        s.dailySummaries.push({ day: dayIndex, text });
+        this.onUpdate();
+      }
+    }).catch(() => {
+      // 静默跳过,摘要失败不影响游戏
+    });
   }
 
   chatFrom(playerId, text, toSeat = null) {
@@ -261,6 +294,7 @@ export class GameCore {
       fromName: from ? from.name : "?",
       to: toSeat == null ? null : toSeat,
       text,
+      day: this.engine.state.day, // 用于按天过滤(摘要Agent)
       ts: Date.now()
     });
     if (this.chat.length > 500) this.chat.splice(0, this.chat.length - 500);

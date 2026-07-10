@@ -80,7 +80,8 @@ export class GameEngine {
       storytellerNotes: [],
       dayStageEndsAt: null,
       winner: null,
-      winReason: null
+      winReason: null,
+      dailySummaries: [] // 每日摘要: [{day, text}], 白天结束时由 summarizer 填充
     };
     const engine = new GameEngine(state, rng);
     engine._log(`游戏开始:${players.length} 名玩家,剧本《${script.name}》`);

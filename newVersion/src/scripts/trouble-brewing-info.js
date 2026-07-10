@@ -214,6 +214,22 @@ function twoPlayerClueOptions(players, self, team, corrupt, rng, script) {
     }
   }
   if (!candidates.length) {
+    // 兜底:即使场上没有真实候选(其他玩家全非此类角色),洗婆娘/图书管理员/调查员
+    // 仍应获得有效线索。规则允许"误注册":说书人可以让任意玩家被注册为 pool 中任一角色
+    // (本质和间谍/隐士误注册相同),信息形式仍是"2 名玩家 + 1 个具体角色名"
+    if (others.length >= 2 && pool.length > 0) {
+      const fakeRole = rng.pick(pool);
+      const a = rng.pick(others);
+      const b = rng.pick(others.filter((p) => p.seat !== a.seat));
+      return {
+        detail: "场上没有真实候选,使用强制虚构信息(规则允许:任意玩家可被误注册为该阵营角色)。",
+        options: [{
+          label: `${a.name} 是【${roleName(script, fakeRole.id)}】`,
+          tag: "强制虚构",
+          text: pairText(a, b, fakeRole.id)
+        }]
+      };
+    }
     return { detail: "场上没有该类角色。", options: [{ label: "告知没有该类角色", tag: "真实", text: `场上没有${teamLabel}` }] };
   }
   const shown = rng.shuffle(candidates).slice(0, 4);

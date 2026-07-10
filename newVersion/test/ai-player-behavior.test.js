@@ -55,7 +55,7 @@ describe("AI 玩家推理提示", () => {
     };
 
     const prompt = buildSystemPrompt(view, "冷静理性");
-    expect(prompt).toContain("【推理工作流】");
+    expect(prompt).toContain("<reasoning_method>");
     expect(prompt).toContain("事实抽取");
     expect(prompt).toContain("约束合并");
     expect(prompt).toContain("假设分支");
@@ -95,7 +95,7 @@ describe("AI 玩家公开声明摘要", () => {
     ];
 
     const situation = buildSituation(viewStub(), chat);
-    expect(situation).toContain("【公开声明摘要】");
+    expect(situation).toContain("<claim_summary>");
     expect(situation).toContain("我是占卜师");
     expect(situation).toContain("查了老鬼和大鹏没红光");
   });

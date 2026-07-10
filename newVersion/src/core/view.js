@@ -91,6 +91,7 @@ export function playerView(state, seat, scriptArg) {
       revealedAlignment: ended ? p.alignment : null
     })),
 
+    dailySummaries: state.dailySummaries || [], // 公开历史每日摘要(对所有玩家安全可见)
     nominations: state.nominations,
     nominatedToday: state.nominatedToday,
     nominatorsToday: state.nominatorsToday,

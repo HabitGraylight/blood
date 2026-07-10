@@ -45,16 +45,75 @@ function rulesBriefForScript(scriptId) {
   ].join("\n");
 }
 
-const REASONING_BRIEF = `【推理工作流】发言前在心里完成,不要把步骤逐条输出:
+const REASONING_BRIEF = `发言前在心里完成推理,不要把步骤逐条输出:
 1. 事实抽取:先列出每名玩家的公开身份声明、能力信息、投票/提名、否认或改口,只使用上下文中出现过的内容。
-2. 声称审计:把每个人声称的角色对照【剧本角色表】——角色名不在表里、或把能力说错(比如说"厨师能保护人"),这是重大邪恶信号,应当公开质疑;再对照【人数配置】数一数各类声称数量,外来者声称超编可能说明有设置修正角色在场。
-3. 约束合并:把“二选一/至少一人/没有命中/确认某角色”等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
-4. 假设分支:分别考虑“这条信息真”“这条信息假或受误导”“说话者在撒谎”三种分支,不要只挑对自己方便的一支。
+2. 声称审计:对照 <role_whitelist> ——角色名不在白名单里,这是重大邪恶信号,应当公开质疑;再对照 <known_role_abilities>(附在声称角色后面的真实能力),如果某人声称的角色能力与官方能力不一致,同样是关键信号;再对照 <player_count_config> 数一数各类声称数量,外来者声称超编可能说明有设置修正角色在场。
+3. 约束合并:把"二选一/至少一人/没有命中/确认某角色"等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
+4. 假设分支:分别考虑"这条信息真""这条信息假或受误导""说话者在撒谎"三种分支,不要只挑对自己方便的一支。
 5. 死亡线索:恶魔倾向夜杀信息型角色。某人公开关键信息后当晚被杀,他的信息可信度上升;自称信息位却一直活到残局、从不被刀的人反而更可疑。
 6. 反证检查:结论出手前,检查它是否与已公开身份、已死亡名单、自己此前发言或最新回应冲突。
 7. 置信表达:证据链完整时可以明确推动;只有部分线索时用怀疑、追问或条件句;邪恶玩家可以撒谎,但谎言也要自洽。`;
 
-/** 剧本角色速查表:AI 识破假角色/假能力声称的依据 */
+/** 角色名白名单:仅名字,不含能力(每条约5 token)。用于AI假名检测,共享缓存块安全合法。 */
+function scriptRoleNameWhitelist(view) {
+  const script = getScript(view.scriptId);
+  const byTeam = new Map();
+  for (const r of Object.values(script.roles)) {
+    if (!byTeam.has(r.team)) byTeam.set(r.team, []);
+    byTeam.get(r.team).push(r.name);
+  }
+  const lines = [`《${script.name}》全部合法角色名:`];
+  for (const [team, names] of byTeam) {
+    lines.push(`  ◆ ${TEAM_LABELS[team]}: ${names.join("、")}`);
+  }
+  return lines.join("\n");
+}
+
+/** RAG按需注入:只注入「自己角色 + 公开声称过的角色 + 邪恶伪装池」的能力文本,替代原先全量角色表(~1500+token) */
+function scriptRolesBriefRAG(view, chatHistory) {
+  const script = getScript(view.scriptId);
+  const roleSet = new Set();
+
+  // 1. 自己的角色
+  roleSet.add(view.you.role);
+
+  // 2. 公开声称过的角色(复用 buildClaimAudit 的提取逻辑)
+  if (chatHistory && chatHistory.length) {
+    const names = Object.values(script.roles).map((r) => r.name);
+    const claimRe = new RegExp(`(?:我是|我就是|我跳|我报|自[认称]|身份是|真)(${names.join("|")})`);
+    const publicChats = chatHistory.filter((c) => c.to == null);
+    const nameToId = new Map(Object.entries(script.roles).map(([id, r]) => [r.name, id]));
+    for (const c of publicChats) {
+      for (const m of (String(c.text || "")).matchAll(new RegExp(claimRe, "g"))) {
+        const rid = nameToId.get(m[1]);
+        if (rid) roleSet.add(rid);
+      }
+    }
+  }
+
+  // 3. 邪恶伪装池
+  if (view.you.evilInfo && Array.isArray(view.you.evilInfo.bluffs)) {
+    for (const b of view.you.evilInfo.bluffs) roleSet.add(b);
+  }
+
+  if (roleSet.size === 0) return "";
+
+  const byTeam = new Map();
+  for (const rid of roleSet) {
+    const r = script.roles[rid];
+    if (!r) continue;
+    if (!byTeam.has(r.team)) byTeam.set(r.team, []);
+    byTeam.get(r.team).push(`${r.name}: ${r.ability}${r.clarify ? `【要点:${r.clarify}】` : ""}`);
+  }
+
+  const lines = ["以下是你已知在局角色或公开被声称角色的真实能力。核对他人声称时以这里为准:"];
+  for (const [team, roles] of byTeam) {
+    lines.push(`  ◆ ${TEAM_LABELS[team]}:`, ...roles.map((r) => `    - ${r}`));
+  }
+  return lines.join("\n");
+}
+
+/** 剧本角色速查表(保留为兼容回退,新代码用 scriptRoleNameWhitelist + scriptRolesBriefRAG) */
 function scriptRolesBrief(view) {
   const script = getScript(view.scriptId);
   const byTeam = new Map();
@@ -102,17 +161,17 @@ export function buildClaimAudit(view, chatHistory) {
   if (!claims.size && !foreign.size) return "";
 
   const byName = new Map(Object.values(script.roles).map((r) => [r.name, r]));
-  const lines = ["【身份声称对照】(由发言自动提取;能力以剧本角色表为准,核对每个人的说法是否与真实能力一致)"];
+  const lines = ["身份声称对照(由发言自动提取;能力以剧本角色表为准):"];
   for (const [seat, set] of claims) {
     const s = view.seats[seat];
     for (const rn of set) {
       const r = byName.get(rn);
-      lines.push(`- ${seatNo(seat)}号 ${s ? s.name : "?"} 声称「${rn}」→ 真实能力: ${r.ability}${r.clarify ? ` (${r.clarify})` : ""}`);
+      lines.push(`  - ${seatNo(seat)}号 ${s ? s.name : "?"} 声称「${rn}」→ 真实能力: ${r.ability}${r.clarify ? ` (${r.clarify})` : ""}`);
     }
   }
   for (const [seat, set] of foreign) {
     const s = view.seats[seat];
-    lines.push(`- ⚠ ${seatNo(seat)}号 ${s ? s.name : "?"} 的发言里出现了本剧本不存在的角色名: ${[...set].join("、")} —— 本剧本没有这些角色;如果他在用这种名字声称身份或描述能力,基本可以断定是编造。你自己也绝不要使用这些叫法。`);
+    lines.push(`  - ${seatNo(seat)}号 ${s ? s.name : "?"} 的发言里出现了本剧本不存在的角色名: ${[...set].join("、")}`);
   }
   return lines.join("\n");
 }
@@ -123,14 +182,66 @@ function compositionBrief(view) {
   const n = view.seats.length;
   const base = script.setupTable && script.setupTable[n];
   if (!base) return "";
-  const lines = [`【人数配置】${n}人局标准配置: 村民${base.townsfolk}、外来者${base.outsider}、爪牙${base.minion}、恶魔${base.demon}。`];
+  const lines = [`${n}人局标准配置: 村民${base.townsfolk}、外来者${base.outsider}、爪牙${base.minion}、恶魔${base.demon}。`];
   const modifiers = Object.values(script.roles).filter((role) => role.setupModifier);
   for (const role of modifiers) {
     const changed = { ...base };
     for (const [team, delta] of Object.entries(role.setupModifier)) changed[team] = Math.max(0, (changed[team] || 0) + delta);
-    lines.push(`若${role.name}在场则改为: 村民${changed.townsfolk ?? 0}、外来者${changed.outsider ?? 0}、爪牙${changed.minion ?? 0}、恶魔${changed.demon ?? 0}。推理时将公开声称的外来者数量与这些配置对照。`);
+    lines.push(`若${role.name}在场则改为: 村民${changed.townsfolk ?? 0}、外来者${changed.outsider ?? 0}、爪牙${changed.minion ?? 0}、恶魔${changed.demon ?? 0}。`);
   }
-  return lines.join("\\n");
+  return lines.join("\n");
+}
+
+/**
+ * 安全断言:共享缓存块文本不得包含任何玩家私密标记。
+ * 与旧版不同 — 玩家名/座位号在公开聊天中合法,不再视为泄露。
+ * @param {string} sharedText 共享缓存块合并文本
+ * @param {string[]} whitelistedRoleNames 剧本全部角色名(白名单内不触发能力文本检测)
+ */
+export function assertNoLeak(sharedText, whitelistedRoleNames = []) {
+  const secretPatterns = [
+    // 玩家私密 XML 标签:这些标签绝不应出现在共享缓存块中
+    { re: /<your_seat>/, label: "<your_seat> 玩家身份标签" },
+    { re: /<your_identity>/, label: "<your_identity> 能力标签" },
+    { re: /<evil_info>/, label: "<evil_info> 邪恶情报标签" },
+    { re: /<bluffs>/, label: "<bluffs> 伪装标签" },
+    { re: /<private_log>/, label: "<private_log> 私密日志标签" },
+    { re: /<memo>/, label: "<memo> 推理档案标签" },
+    { re: /<persona>/, label: "<persona> 性格标签" },
+    // <known_role_abilities> 和 <role_strategy> 在 REASONING_BRIEF 中作为合法引用出现,不视为泄露
+    // 纯文本私密标记(兜底)
+    { re: /^你是\s*\d+号/m, label: "「你是N号」行首指代" },
+    { re: /^你的(身份|能力|角色)[是为]/m, label: "「你的身份/能力/角色」行首" },
+  ];
+
+  for (const { re, label } of secretPatterns) {
+    if (re.test(sharedText)) {
+      const match = sharedText.match(re);
+      throw new Error(
+        `assertNoLeak: 共享缓存块中发现私密标记 "${label}"` +
+        (match ? ` → "${match[0].slice(0, 60)}"` : "") +
+        `。请将其移到动态块(Block 3)中。`
+      );
+    }
+  }
+
+  // 能力文本检测:共享块不应包含角色能力详情(白名单纯名字OK)
+  const abilityPatterns = [
+    /[：:]\s*你\s*(每晚|可以|选择|能够)/,
+    /【要点:/,
+    /真实能力:/,
+  ];
+  // 构造白名单名字的正则,用于排除误报
+  const nameSet = new Set(whitelistedRoleNames);
+  for (const p of abilityPatterns) {
+    if (p.test(sharedText)) {
+      throw new Error(
+        `assertNoLeak: 共享缓存块中发现角色能力描述文本 —— 角色能力属于私密信息,请将其移到动态块(Block 3)或RAG检索中。`
+      );
+    }
+  }
+
+  return true;
 }
 
 /** 对玩家展示的座位号统一为 1 号起(与游戏界面一致);引擎内部仍是 0 起 */
@@ -146,17 +257,17 @@ function seatNo(seat) {
 function renderMemo(view, memo) {
   if (!memo) return "";
   if (memo.players && typeof memo.players === "object") {
-    const lines = [`【你的推理档案(你自己维护的工作记忆,截至第${memo.updatedDay}天)】`];
+    const lines = [`你自己维护的工作记忆,截至第${memo.updatedDay}天:`];
     for (const s of view.seats) {
       const note = memo.players[String(seatNo(s.seat))] || memo.players[seatNo(s.seat)];
-      if (note) lines.push(`- ${seatNo(s.seat)}号 ${s.name}${s.alive ? "" : "(已死)"}: ${String(note).slice(0, 80)}`);
+      if (note) lines.push(`  - ${seatNo(s.seat)}号 ${s.name}${s.alive ? "" : "(已死)"}: ${String(note).slice(0, 80)}`);
     }
-    if (memo.self) lines.push(`- 你自己的声称/承诺: ${String(memo.self).slice(0, 80)}`);
-    if (memo.plan) lines.push(`- 你的计划与首要怀疑: ${String(memo.plan).slice(0, 100)}`);
+    if (memo.self) lines.push(`  - 你自己的声称/承诺: ${String(memo.self).slice(0, 80)}`);
+    if (memo.plan) lines.push(`  - 你的计划与首要怀疑: ${String(memo.plan).slice(0, 100)}`);
     return lines.length > 1 ? lines.join("\n") : "";
   }
   if (memo.summary) {
-    return `【你的长期记忆(截至第${memo.updatedDay}天,聊天记录之外的重要事实)】\n${memo.summary}`;
+    return `长期记忆(截至第${memo.updatedDay}天):\n${memo.summary}`;
   }
   return "";
 }
@@ -185,23 +296,23 @@ function tempoBrief(view) {
   const execLine = Math.ceil(alive / 2);
   const script = getScript(view.scriptId);
   const hints = script.reference?.endgameHints || {};
-  const lines = [`【关键数字】存活 ${alive} 人;处决需要至少 ${execLine} 票且为当日最高票。场上只剩 2 名存活玩家时邪恶立即获胜。`];
+  const lines = [`存活 ${alive} 人;处决需要至少 ${execLine} 票且为当日最高票。场上只剩 2 名存活玩家时邪恶立即获胜。`];
   if (alive === 3) {
     lines.push(
-      "【终局警告】只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会;逐一核对存活 3 人的身份声称——谁的角色/能力说辞对不上剧本、谁的信息链无人佐证、谁一直没被恶魔刀,谁就最可能是恶魔。" +
+      "只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会。" +
         (hints.three || "")
     );
   } else if (alive === 4) {
     lines.push(
-      "【残局警告】只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会,必须把票投给最可能是恶魔的人,而不是最吵的人。" +
+      "只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会。" +
         (hints.four || "")
     );
   } else if (alive === 5) {
-    lines.push("【节奏提醒】只剩 5 人。若今天不处决,入夜再死 1 人就进入 4 人残局,善良容错只剩一次。");
+    lines.push("只剩 5 人。若今天不处决,入夜再死 1 人就进入 4 人残局,善良容错只剩一次。");
   }
   if (view.phase === "day" && alive > 5) {
     lines.push(
-      "【节奏提醒】白天的处决是善良阵营唯一的主动进攻手段;一天不处决,等于白送邪恶一个夜晚。处决可疑者哪怕错了,也能换来死亡信息与声称验证。" +
+      "白天的处决是善良阵营唯一的主动进攻手段;一天不处决,等于白送邪恶一个夜晚。" +
         (hints.pace || "")
     );
   }
@@ -261,128 +372,180 @@ export function buildPublicClaimSummary(view, chatHistory) {
   }
 
   const lines = [
-    "【公开声明摘要】(来自最近约120条公开发言;这是原话摘要,不要改写成相反意思)",
-    ...[...byPlayer.values()].map((entry) => `- ${entry.name}: ${entry.lines.join("; ")}`)
+    "最近约120条公开发言摘要(原话,不要改写成相反意思):",
+    ...[...byPlayer.values()].map((entry) => `  - ${entry.name}: ${entry.lines.join("; ")}`)
   ];
-  if (hasPairInfo) {
-    lines.push("【推理提醒】二选一或至少一人命中的信息,不能转述成两人都是、两人都说谎或两人都邪恶。");
-  }
-  if (selfLines.length) {
-    lines.push("【你自己此前公开说过】", ...selfLines.slice(-8));
-  }
+  if (hasPairInfo) lines.push("推理提醒:二选一或至少一人命中的信息,不能转述成两人都是、两人都说谎或两人都邪恶。");
+  if (selfLines.length) lines.push("你自己此前公开说过:", ...selfLines.slice(-8));
   return lines.join("\n");
 }
 
-/** 构建系统提示:行为准则、身份、私密信息、角色策略、性格、长期记忆 */
-export function buildSystemPrompt(view, persona, memo = null) {
-  const you = view.you;
-  const lines = [
-    `${PLAYER_SYSTEM}`,
-    "",
-    rulesBriefForScript(view.scriptId),
-    "",
-    scriptRolesBrief(view),
-    "",
-    compositionBrief(view),
-    "",
-    REASONING_BRIEF,
-    "",
-    `【你的座位】你是 ${seatNo(view.seat)}号玩家「${view.name}」(座位号从1开始,与座位表一致)`,
-    `【你的身份】${you.roleName}(${you.teamLabel},${you.alignmentLabel}阵营)`,
-    `【你的能力】${you.ability}`,
-    you.alive ? "" : "【注意】你已死亡,仍可发言" + (you.ghostVote ? ",还有一次遗书票。" : ",且无法再投票。"),
-    "",
-    "【角色策略】",
-    roleDoc(view.scriptId, you.role),
-    "",
-    `【阶段建议】${stageAdvice(view)}`
+/**
+ * 构建共享系统提示块(Block1 + Block2),带 assertNoLeak 安全断言与 cache_control 断点。
+ * 返回 Anthropic 兼容的 system block 数组。所有AI玩家可共享,绝不含任何玩家私密。
+ * @param {object} view playerView
+ * @param {Array} chatHistory 聊天记录
+ * @returns {Array<{type:string, text:string, cache_control?:object}>}
+ */
+export function buildSharedSystemBlocks(view, chatHistory) {
+  const script = getScript(view.scriptId);
+  const whitelistNames = Object.values(script.roles).map((r) => r.name);
+
+  // Block 1: 静态公共内容 + 历史每日摘要(整天稳定不变)
+  // 每个语义块用 XML 标签隔离,降低模型混淆/幻觉
+  const parts = [
+    `<behavior_rules>\n${PLAYER_SYSTEM}\n</behavior_rules>`,
+    `<script_rules>\n${rulesBriefForScript(view.scriptId)}\n</script_rules>`,
+    `<role_whitelist>\n${scriptRoleNameWhitelist(view)}\n</role_whitelist>`,
+    compositionBrief(view) ? `<player_count_config>\n${compositionBrief(view)}\n</player_count_config>` : "",
+    `<reasoning_method>\n${REASONING_BRIEF}\n</reasoning_method>`,
   ];
+
+  // 注入历史每日摘要
+  if (view.dailySummaries && view.dailySummaries.length) {
+    const summaryLines = view.dailySummaries.map((s) => `  - 第${s.day}天: ${s.text}`);
+    parts.push(`<daily_summaries>\n${summaryLines.join("\n")}\n</daily_summaries>`);
+  }
+
+  const block1Text = parts.filter(Boolean).join("\n\n");
+
+  // 安全断言:共享缓存块不得包含任何玩家私密标记
+  assertNoLeak(block1Text, whitelistNames);
+
+  return [
+    { type: "text", text: block1Text, cache_control: { type: "ephemeral" } },
+  ];
+}
+
+/**
+ * 构建当天公开聊天块(放入 user 消息,避免 MiniMax 对 system 段的严格内容审核触发 new_sensitive)。
+ * 返回纯文本字符串,调用方拼入 user 消息中。
+ */
+export function buildPublicChatBlock(chatHistory) {
+  const publicChats = (chatHistory || []).filter((c) => c.to == null);
+  if (!publicChats.length) return "";
+  const chatLines = publicChats.map((c) => {
+    const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}`;
+    return `  ${who}: ${c.text}`;
+  });
+  return `<public_chat>\n${chatLines.join("\n")}\n</public_chat>`;
+}
+
+/**
+ * 构建玩家专属系统提示块(Block3)——含身份、能力、角色策略、RAG检索、私密信息等。
+ * 返回 Anthropic 兼容的 system block 数组,不进行缓存(每AI独有,永不共享)。
+ * @param {object} view playerView
+ * @param {string} persona 性格设定
+ * @param {object|null} memo 长期记忆
+ * @param {Array} chatHistory 聊天记录(用于RAG检索)
+ * @returns {Array<{type:string, text:string}>}
+ */
+export function buildPlayerSystemBlocks(view, persona, memo, chatHistory) {
+  const you = view.you;
+  const parts = [
+    `<your_seat>你是 ${seatNo(view.seat)}号玩家「${view.name}」(座位号从1开始,与座位表一致)</your_seat>`,
+    `<your_identity>\n  身份: ${you.roleName}(${you.teamLabel},${you.alignmentLabel}阵营)\n  能力: ${you.ability}\n  ${you.alive ? "" : "你已死亡" + (you.ghostVote ? ",还有一次遗书票" : ",无法再投票")}\n</your_identity>`,
+  ];
+
+  // RAG 检索
+  const ragRoles = scriptRolesBriefRAG(view, chatHistory);
+  if (ragRoles) parts.push(`<known_role_abilities>\n${ragRoles}\n</known_role_abilities>`);
+
+  parts.push(
+    `<role_strategy>\n${roleDoc(view.scriptId, you.role)}\n</role_strategy>`,
+    `<stage_advice>${stageAdvice(view)}</stage_advice>`
+  );
 
   if (you.evilInfo) {
     const demon = view.seats[you.evilInfo.demonSeat];
     const minions = you.evilInfo.minionSeats.map((s) => `${seatNo(s)}号 ${view.seats[s].name}`);
-    lines.push(
-      "",
-      `【邪恶阵营情报】恶魔是 ${seatNo(you.evilInfo.demonSeat)}号 ${demon.name}` +
-        (minions.length ? `;爪牙: ${minions.join("、")}` : "")
-    );
+    parts.push(`<evil_info>恶魔是 ${seatNo(you.evilInfo.demonSeat)}号 ${demon.name}${minions.length ? "; 爪牙: " + minions.join("、") : ""}</evil_info>`);
     if (you.evilInfo.bluffs && you.evilInfo.bluffs.length) {
       const script = getScript(view.scriptId);
-      lines.push(`【可用伪装】这些角色不在场上,可谎称: ${you.evilInfo.bluffs.map((id) => scriptRoleName(script, id)).join("、")}`);
+      parts.push(`<bluffs>${you.evilInfo.bluffs.map((id) => scriptRoleName(script, id)).join("、")}</bluffs>`);
     }
   }
 
   if (you.privateLog.length) {
-    lines.push(
-      "",
-      "【你的私密信息(只有你知道)】",
-      ...you.privateLog.map((l) => `- [第${l.night}夜] ${l.text}`)
-    );
+    const logLines = you.privateLog.map((l) => `  - [第${l.night}夜] ${l.text}`);
+    parts.push(`<private_log>\n${logLines.join("\n")}\n</private_log>`);
   }
 
   const memoBlock = renderMemo(view, memo);
-  if (memoBlock) lines.push("", memoBlock);
+  if (memoBlock) parts.push(`<memo>\n${memoBlock}\n</memo>`);
 
-  lines.push("", `【性格设定】${persona || "冷静理性,善于观察"}`);
-  return lines.filter((l) => l !== null && l !== undefined && l !== "").join("\n");
+  parts.push(`<persona>${persona || "冷静理性,善于观察"}</persona>`);
+
+  const block3Text = parts.filter(Boolean).join("\n\n");
+  return [{ type: "text", text: block3Text }];
+}
+
+/** 兼容包装:拼接共享块+玩家块为单一字符串(供测试/回退使用,不启用缓存) */
+export function buildSystemPrompt(view, persona, memo = null) {
+  const shared = buildSharedSystemBlocks(view, []);
+  const player = buildPlayerSystemBlocks(view, persona, memo, []);
+  const chat = buildPublicChatBlock([]);
+  return [...shared, ...player].map((b) => b.text).concat(chat ? [chat] : []).join("\n");
 }
 
 /** 构建当前局面描述 */
 export function buildSituation(view, chatHistory) {
   const aliveSeats = view.seats.filter((s) => s.alive);
   const deadSeats = view.seats.filter((s) => !s.alive);
-  const lines = [
-    `【当前局面】第 ${view.day} 个白天,存活 ${aliveSeats.length} 人。`,
-    "【座位表】",
-    ...view.seats.map(seatLine),
-    `【存活玩家】${aliveSeats.map((s) => `${seatNo(s.seat)}号 ${s.name}`).join("、")}`,
-    deadSeats.length
-      ? `【已死亡】${deadSeats.map((s) => `${seatNo(s.seat)}号 ${s.name}`).join("、")} —— 死者不能被提名、处决或作为投票对象;夜间能力也不应选择死者。谈论计划前先核对这份名单。`
-      : "",
-    ""
-  ].filter((l) => l !== "");
-  lines.push("");
+
+  const parts = [
+    `<current_state>第 ${view.day} 个白天,存活 ${aliveSeats.length} 人。</current_state>`,
+    `<seat_table>\n${view.seats.map(seatLine).join("\n")}\n</seat_table>`,
+    `<alive_players>${aliveSeats.map((s) => `${seatNo(s.seat)}号 ${s.name}`).join("、")}</alive_players>`,
+  ];
+
+  if (deadSeats.length) {
+    parts.push(`<dead_players>${deadSeats.map((s) => `${seatNo(s.seat)}号 ${s.name}`).join("、")} —— 死者不能被提名、处决或作为投票对象</dead_players>`);
+  }
+
   if (view.onBlock && view.onBlock.seat != null) {
-    lines.push(`当前处决台上: ${view.seats[view.onBlock.seat].name} (${view.onBlock.votes}票)`);
+    parts.push(`<execution_block>处决台上: ${view.seats[view.onBlock.seat].name} (${view.onBlock.votes}票)</execution_block>`);
   }
+
   if (view.nominations.length) {
-    lines.push(
-      "【今日提名记录】",
-      ...view.nominations.map(
-        (n) => `${view.seats[n.nominator].name} 提名 ${view.seats[n.nominee].name}: ${n.votes}票 (${n.result === "block" ? "待处决" : n.result === "tie" ? "平票" : "未通过"})`
-      )
+    const nomLines = view.nominations.map(
+      (n) => `  ${view.seats[n.nominator].name} 提名 ${view.seats[n.nominee].name}: ${n.votes}票 (${n.result === "block" ? "待处决" : n.result === "tie" ? "平票" : "未通过"})`
     );
+    parts.push(`<nominations>\n${nomLines.join("\n")}\n</nominations>`);
   }
-  lines.push(tempoBrief(view));
+
+  parts.push(`<critical_numbers>\n${tempoBrief(view)}\n</critical_numbers>`);
+
   const recentLog = view.log.slice(-15);
-  lines.push("【公开事件】", ...recentLog.map((l) => `- ${l.text}`));
+  if (recentLog.length) {
+    parts.push(`<public_events>\n${recentLog.map((l) => `  - ${l.text}`).join("\n")}\n</public_events>`);
+  }
+
   const claimSummary = buildPublicClaimSummary(view, chatHistory);
-  if (claimSummary) lines.push(claimSummary);
+  if (claimSummary) parts.push(`<claim_summary>\n${claimSummary}\n</claim_summary>`);
+
   const claimAudit = buildClaimAudit(view, chatHistory);
-  if (claimAudit) lines.push(claimAudit);
+  if (claimAudit) parts.push(`<claim_audit>\n${claimAudit}\n</claim_audit>`);
+
   const myRecent = (chatHistory || []).filter((c) => c.fromSeat === view.seat && c.to == null).slice(-3);
   if (myRecent.length) {
-    lines.push(
-      "【你最近的公开发言】(逐字记录;不要原样重复这些话,已提过的问题/要求别人回应过就不要再问)",
-      ...myRecent.map((c) => `- "${compactQuote(c.text, 70)}"`)
-    );
+    const mineLines = myRecent.map((c) => `  - "${compactQuote(c.text, 70)}"`);
+    parts.push(`<your_recent_speech>\n${mineLines.join("\n")}\n</your_recent_speech>`);
   }
+
   if (chatHistory && chatHistory.length) {
-    lines.push(
-      "【最近发言】(按时间顺序,最后一条是最新发言;发言人前的编号即其座位号;标注“(你自己)”的是你说过的话)",
-      ...chatHistory.slice(-40).map((c) => {
-        const isSelf = c.fromSeat === view.seat;
-        const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}${isSelf ? "(你自己)" : ""}`;
-        const dm = c.to == null ? "" : isSelf ? `(你私聊${seatNo(c.to)}号)` : "(私聊你)";
-        return `${who}${dm}: ${c.text}`;
-      })
-    );
+    const msgLines = chatHistory.slice(-40).map((c) => {
+      const isSelf = c.fromSeat === view.seat;
+      const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}${isSelf ? "(你自己)" : ""}`;
+      const dm = c.to == null ? "" : isSelf ? `(你私聊${seatNo(c.to)}号)` : "(私聊你)";
+      return `  ${who}${dm}: ${c.text}`;
+    });
+    parts.push(`<recent_messages>\n${msgLines.join("\n")}\n</recent_messages>`);
   }
-  lines.push(
-    "",
-    `【身份锚点】你是 ${seatNo(view.seat)}号「${view.name}」。上面【最近发言】中只有标注“(你自己)”的才是你说过的话;其他人的发言、计划、身份声称都不是你的,绝不能用第一人称复述。发言时把自己的名字当第三者谈论是致命错误。`
-  );
-  return lines.join("\n");
+
+  parts.push(`<identity_anchor>你是 ${seatNo(view.seat)}号「${view.name}」。上面 recent_messages 中只有标注"(你自己)"的才是你说过的话;其他人的发言、计划、身份声称都不是你的,绝不能用第一人称复述。</identity_anchor>`);
+
+  return parts.join("\n\n");
 }
 
 export function nightActionPrompt(view, pendingAction) {
@@ -447,7 +610,7 @@ export function votePrompt(view, chatHistory, voteCtx) {
   const alive = view.seats.filter((s) => s.alive).length;
   const execLine = Math.ceil(alive / 2);
   const endgameLine = alive <= 4
-    ? `【生死投票】只剩 ${alive} 名存活玩家,这次处决很可能直接决定胜负:处决恶魔=善良获胜;处决好人=邪恶马上获胜。先在心里回答“${nominee.name} 是恶魔的概率有多高?场上还有谁更像恶魔?”再投票,不要跟风。`
+    ? `【生死投票】只剩 ${alive} 名存活玩家,这次处决很可能直接决定胜负:处决恶魔=善良获胜;处决好人=邪恶马上获胜。先在心里回答"${nominee.name} 是恶魔的概率有多高?场上还有谁更像恶魔?"再投票,不要跟风。`
     : "";
   const ghostLine = view.you.alive
     ? ""

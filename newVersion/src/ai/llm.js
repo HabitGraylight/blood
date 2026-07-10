@@ -45,10 +45,11 @@ export function llmBudgetTier() {
 let budgetUsed = 0;
 let budgetWarned = false;
 
-/** 新对局开始时重置预算 */
+/** 新对局开始时重置预算与缓存统计 */
 export function resetLLMBudget() {
   budgetUsed = 0;
   budgetWarned = false;
+  resetCacheStats();
 }
 
 export function getLLMUsage() {
@@ -90,8 +91,32 @@ function release() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* ---------------- 缓存用量监控 ---------------- */
+
+let _cacheStats = { creation: 0, read: 0, calls: 0 };
+
+/** 获取累计缓存用量统计(供测试/监控使用) */
+export function getCacheStats() {
+  return { ..._cacheStats };
+}
+
+/** 重置缓存用量统计(新对局开始) */
+export function resetCacheStats() {
+  _cacheStats = { creation: 0, read: 0, calls: 0 };
+}
+
 /* ---------------- 请求 ---------------- */
 
+/**
+ * 调用 LLM 完成对话。
+ *
+ * @param {Array} messages - 消息数组 [{role, content}]
+ *   // 兼容旧格式: 包含 system role 的消息会被提取为字符串 system
+ * @param {object} options
+ *   // 新格式(推荐): systemBlocks 直接作为 Anthropic system 数组,支持 cache_control
+ * @param {Array} options.systemBlocks - [{type:"text", text, cache_control?:{type:"ephemeral"}}]
+ * @returns {string} 返回模型输出文本
+ */
 export async function chatComplete(messages, options = {}) {
   if (!isLLMConfigured()) throw new Error("LLM 环境变量未配置");
   if (!consumeBudget()) throw new Error("本局 LLM 调用额度已用完");
@@ -121,11 +146,22 @@ export async function chatComplete(messages, options = {}) {
 }
 
 async function anthropicRequest(cfg, messages, options, signal) {
-  const system = messages
-    .filter((m) => m.role === "system")
-    .map((m) => m.content)
-    .join("\n\n");
-  const rest = messages.filter((m) => m.role !== "system");
+  // 新格式: options.systemBlocks 直接作为 Anthropic system 数组(支持 cache_control 多断点)
+  // 旧格式兼容: messages 中包含 system role 的消息提取为字符串
+  let system;
+  if (options.systemBlocks && options.systemBlocks.length) {
+    system = options.systemBlocks;
+  } else {
+    const sysText = messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n\n");
+    if (sysText) system = sysText;
+  }
+
+  const rest = options.systemBlocks
+    ? messages // 使用 systemBlocks 时,messages 不含 system role
+    : messages.filter((m) => m.role !== "system");
 
   const headers = { "Content-Type": "application/json" };
   // 生产代理的共享令牌(防止被第三方白嫖)
@@ -150,6 +186,22 @@ async function anthropicRequest(cfg, messages, options, signal) {
     throw err;
   }
   const data = await res.json();
+
+  // 解析缓存用量(MiniMax Anthropic 兼容接口)
+  if (data.usage) {
+    const created = data.usage.cache_creation_input_tokens || 0;
+    const read = data.usage.cache_read_input_tokens || 0;
+    _cacheStats.calls++;
+    if (created > 0) _cacheStats.creation += created;
+    if (read > 0) _cacheStats.read += read;
+    if (created > 0 || read > 0) {
+      console.debug(
+        `[LLM Cache] 创建=${created} tokens, 读取=${read} tokens ` +
+        `(累计: 创建=${_cacheStats.creation}, 读取=${_cacheStats.read}, 调用=${_cacheStats.calls})`
+      );
+    }
+  }
+
   const text = (data.content || [])
     .filter((block) => block.type === "text")
     .map((block) => block.text)
