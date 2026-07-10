@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/minimax/:path*", "destination": "/api/minimax" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

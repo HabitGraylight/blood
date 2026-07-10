@@ -5,11 +5,13 @@
  * 本函数读 Vercel 环境变量注入 x-api-key + anthropic-version 后转发到 MiniMax。
  * 浏览器端永远看不到 API key，也不存在 CORS 问题。
  *
- * 注意:Vercel 的 Node.js Serverless Function 在 handler 执行前就已经把
- * Content-Type: application/json 的请求体读完并解析到 req.body 上了，
- * 不能再手动 req.on('data'/'end') 读原始流(流已被消费，end 不会再触发，
- * 会导致 Promise 永远 pending 直到前端超时中止 —— 这也是之前线上失败的原因)。
- * 因此这里直接使用 req.body。
+ * 注意:
+ * 1. 这是普通 Vercel Functions(非 Next.js)，文件名不能用 [param] / [...path]
+ *    这种方括号动态段语法 —— 那些只对 Next.js 有效。故本文件命名为
+ *    api/minimax.js 并配合 vercel.json 的 rewrite 接管 /api/minimax/* 子路径。
+ * 2. Vercel 已把 Content-Type: application/json 的请求体解析到 req.body，
+ *    不要再手动 req.on('data'/'end') 读流(流已被消费，end 不会再触发，
+ *    会导致 Promise 一直 pending 直到前端超时 —— 这也是之前线上失败的原因之一)。
  *
  * 需要的 Vercel 环境变量:
  *   MINIMAX_API_KEY        必填
