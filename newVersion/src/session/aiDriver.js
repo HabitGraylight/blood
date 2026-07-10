@@ -103,11 +103,23 @@ export class AIDriver {
     return (ai && ai.traits) || { aggr: 0.5, talk: 0.5 };
   }
 
+  /** 剧本声明的白天动作类型(如杀手开枪),与提名/投票同样计入"玩家活动" */
+  _scriptActionTypes() {
+    if (!this._scriptActions) {
+      this._scriptActions = new Set(
+        (this.engine.script.dayActions || []).map((a) => a.actionType)
+      );
+    }
+    return this._scriptActions;
+  }
+
   _dispatch(action) {
     if (this.disposed || this.engine.state.winner) return;
     const res = this.engine.dispatch(action);
     if (!res.ok) console.warn("AI 动作被拒绝:", action, res.error);
-    if (["nominate", "vote", "slayerShot"].includes(action.type)) this.noteActivity();
+    if (["nominate", "vote"].includes(action.type) || this._scriptActionTypes().has(action.type)) {
+      this.noteActivity();
+    }
     this.onChange();
     this.tick();
   }
@@ -312,11 +324,13 @@ export class AIDriver {
       discussionLater.splice(this.rng.int(discussionLater.length + 1), 0, w);
     }
 
-    // 自认为是杀手的 AI(含以为自己是杀手的酒鬼):每天在讨论后段考虑一次是否开枪
+    // 拥有剧本白天主动能力的 AI(含自认为拥有的伪装身份,如以为自己是杀手的酒鬼):
+    // 每天在讨论后段考虑一次是否使用。动作列表来自玩家视图,不含任何角色硬编码。
     for (const seat of aiSeats) {
-      const you = this._viewOf(seat).you;
-      if (you.role === "slayer" && !you.slayerUsed) {
-        discussionLater.push({ kind: "slayer", seat });
+      const view = this._viewOf(seat);
+      for (const action of view.availableDayActions || []) {
+        if (action.roleId && view.you.role !== action.roleId) continue; // 不主动冒用他人能力
+        discussionLater.push({ kind: "dayAction", seat, action });
       }
     }
 
@@ -520,7 +534,7 @@ export class AIDriver {
     }
   }
 
-  /** 计划中的杀手开枪考虑:决定开枪就公开宣告并结算 */
+  /** 计划中的白天主动能力考虑:决定使用就按剧本配置的宣告文案公开宣告并结算 */
   async _doPlannedDayAction(item) {
     await delay(this._paceGap(0.8));
     if (this.disposed) return;
@@ -531,14 +545,18 @@ export class AIDriver {
     });
     if (!quiet || this.disposed) return;
     const view = this._viewOf(item.seat);
-    const action = item.action || (view.availableDayActions || []).find((a) => a.actionType === "slayerShot");
+    const action = (view.availableDayActions || []).find(
+      (a) => a.actionType === item.action.actionType
+    );
     if (!action || !view.you.alive) return;
     const ai = this.aiPlayers.get(item.seat);
-    const target = await ai.decideSlayerShot(view, this.getChatFor(item.seat));
+    const target = await ai.decideDayAction(view, this.getChatFor(item.seat), action);
     if (target == null || this.disposed) return;
     const st = this.engine.state;
     if (st.phase !== "day" || !st.players[item.seat].alive || !st.players[target]?.alive) return;
-    this._say(item.seat, `我是杀手,我对 ${st.players[target].name} 开枪!`, null);
+    if (action.announceTemplate) {
+      this._say(item.seat, action.announceTemplate.replace("{target}", st.players[target].name), null);
+    }
     this._dispatch({ type: action.actionType, seat: item.seat, target });
   }
 

@@ -3,7 +3,7 @@
  * 处理设置修正、酒鬼伪装身份、占卜师红鲱鱼等脚本内规则。
  */
 import { TEAM, resolveScript, rolesByTeam } from "../scripts/registry.js";
-import { getBelievedRole, normalizePlayer } from "./state.js";
+import { normalizePlayer } from "./state.js";
 
 /** 计算实际身份分布(应用男爵等设置修正) */
 export function resolveComposition(playerCount, chosenRoles = [], scriptOrId) {
@@ -65,7 +65,8 @@ export function assignRoles(players, rng, fixedRoles, scriptOrId) {
   const seats = players.map((p, seat) => {
     const roleId = roles[seat];
     const role = script.roles[roleId];
-    return {
+    // normalizePlayer 负责初始化 roleState/statuses 与兼容旧存档的镜像字段
+    return normalizePlayer({
       seat,
       id: p.id,
       name: p.name,
@@ -76,17 +77,10 @@ export function assignRoles(players, rng, fixedRoles, scriptOrId) {
       alignment: role.team === TEAM.MINION || role.team === TEAM.DEMON ? "evil" : "good",
       alive: true,
       ghostVote: true,
-      believedRole: null,
-      poisonedBy: null,
-      protectedBy: null,
-      master: null,
-      redHerring: false,
-      usedAbility: false,
-      slayerUsed: false,
       diedTonight: false,
       evilInfo: null,
       privateLog: []
-    };
+    });
   });
 
   // 剧本的设置期处理(如酒鬼伪装身份、占卜师红鲱鱼)

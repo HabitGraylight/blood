@@ -4,6 +4,7 @@
  * does not throw the player back to the home screen.
  */
 import { GameEngine } from "../core/engine.js";
+import { DEFAULT_SCRIPT_ID } from "../scripts/registry.js";
 import { playerView, storytellerView, spectatorView } from "../core/view.js";
 import { AIPlayer } from "../ai/aiController.js";
 import { AIStoryteller } from "../ai/storytellerController.js";
@@ -36,9 +37,9 @@ export class GameCore {
 
     if (options.snapshot?.engineState) {
       this.engine = GameEngine.hydrate(options.snapshot.engineState);
-      this.scriptId = this.engine.state.scriptId || options.scriptId || "trouble-brewing";
+      this.scriptId = this.engine.state.scriptId || options.scriptId || DEFAULT_SCRIPT_ID;
     } else {
-      this.scriptId = options.scriptId || "trouble-brewing";
+      this.scriptId = options.scriptId || DEFAULT_SCRIPT_ID;
       // aiStoryteller:无人类说书人时由 AI 行使完整裁量权(裁定、节奏、旁白)
       const storytellerMode = this.storytellerId
         ? "human"
@@ -184,15 +185,21 @@ export class GameCore {
       case "vote":
         safe = { type: "vote", seat, up: !!action.up };
         break;
-      case "slayerShot":
-        safe = { type: "slayerShot", seat, target: action.target };
-        break;
       case "endDay":
         if (!isHost) return { ok: false, error: "只有房主可以宣布黄昏" };
         safe = { type: "endDay" };
         break;
-      default:
-        return { ok: false, error: `未知动作: ${action.type}` };
+      default: {
+        // 剧本声明的白天动作(如杀手开枪):按 targetPolicy 清洗参数后放行
+        const dayAction = (this.engine.script.dayActions || []).find(
+          (a) => a.actionType === action.type
+        );
+        if (!dayAction) return { ok: false, error: `未知动作: ${action.type}` };
+        const count = dayAction.targetPolicy?.count || 1;
+        safe = count === 1
+          ? { type: action.type, seat, target: action.target }
+          : { type: action.type, seat, targets: action.targets };
+      }
     }
 
     const res = this.engine.dispatch(safe);
@@ -205,15 +212,18 @@ export class GameCore {
   }
 
   dispatchStoryteller(action) {
+    // 引擎内建说书人动作 + 剧本声明的说书人动作(behaviors.actions 中 storyteller 前缀)
+    const scriptStActions = Object.keys(this.engine.behaviors?.actions || {})
+      .filter((type) => type.startsWith("storyteller"));
     const allowed = new Set([
       "storytellerDecide",
       "storytellerNarrate",
       "storytellerSetInfoOverride",
       "storytellerSetRegistration",
       "storytellerSetNightDeath",
-      "storytellerResolveMayor",
       "storytellerAdvancePhase",
-      "endDay"
+      "endDay",
+      ...scriptStActions
     ]);
     if (!allowed.has(action.type)) return { ok: false, error: "该动作不是说书人动作" };
     const safe = action.type === "endDay" ? { type: "endDay" } : { ...action };

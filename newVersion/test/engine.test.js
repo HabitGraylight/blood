@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import { GameEngine } from "../src/core/engine.js";
 import { drawRoles } from "../src/core/setup.js";
 import { resolveVoteResult, checkWin } from "../src/core/rules.js";
+import { registrationOf } from "../src/core/registration.js";
 import {
-  registrationOf, buildNightInfoCandidates, washerwomanInfo, librarianInfo, investigatorInfo,
+  buildNightInfoCandidates, washerwomanInfo, librarianInfo, investigatorInfo,
   chefInfo, empathInfo, fortuneTellerInfo, undertakerInfo, ravenkeeperInfo
-} from "../src/core/info.js";
+} from "../src/scripts/trouble-brewing-info.js";
 import { createRng } from "../src/core/rng.js";
 import { ROLES, TEAM, SETUP_TABLE } from "../src/scripts/trouble-brewing.js";
 import { playerView, storytellerView } from "../src/core/view.js";

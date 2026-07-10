@@ -4,11 +4,9 @@
 import { TEAM, resolveScript } from "../scripts/registry.js";
 
 /**
- * 检查是否有一方获胜。
- * 返回 null 或 { winner: "good"|"evil", reason }。
+ * 默认胜负判定(经典 BotC):恶魔全灭 → 善良胜;仅剩两名存活 → 邪恶胜。
  */
-export function checkWin(players, scriptOrId) {
-  const script = resolveScript(scriptOrId);
+export function defaultCheckWin(players, script) {
   const alive = players.filter((p) => p.alive);
   const demonAlive = alive.some((p) => script.roles[p.role].team === TEAM.DEMON);
 
@@ -19,6 +17,18 @@ export function checkWin(players, scriptOrId) {
     return { winner: "evil", reason: "小镇只剩两名存活玩家,邪恶阵营获胜!" };
   }
   return null;
+}
+
+/**
+ * 检查是否有一方获胜。剧本可通过 behaviors.checkWin(players, script, defaultCheckWin)
+ * 覆盖默认判定(如恶魔不止一个、或有额外终局条件的剧本)。
+ * 返回 null 或 { winner: "good"|"evil", reason }。
+ */
+export function checkWin(players, scriptOrId) {
+  const script = resolveScript(scriptOrId);
+  const custom = script.behaviors && script.behaviors.checkWin;
+  if (typeof custom === "function") return custom(players, script, defaultCheckWin);
+  return defaultCheckWin(players, script);
 }
 
 /**

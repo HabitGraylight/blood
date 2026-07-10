@@ -1,4 +1,5 @@
 ﻿import { GameCore, AI_PERSONAS } from "./gameCore.js";
+import { DEFAULT_SCRIPT_ID } from "../scripts/registry.js";
 import { ensureAuth, getCurrentUser, roomRef, fb, makeRoomCode } from "./firebase.js";
 import { createRng, randomSeed } from "../core/rng.js";
 import { buildReplayFromCore } from "./gameHistory.js";
@@ -89,7 +90,7 @@ class BaseFirebaseSession {
     this.listeners = new Set();
     this.lobby = {};
     this.status = "lobby";
-    this.scriptId = "trouble-brewing";
+    this.scriptId = DEFAULT_SCRIPT_ID;
     this.storytellerName = name;
     this.storytellerUid = uid;
     this.storytellerMode = "human";
@@ -177,7 +178,7 @@ class BaseFirebaseSession {
 }
 
 export class FirebaseHostSession extends BaseFirebaseSession {
-  static async create(playerName, scriptId = "trouble-brewing") {
+  static async create(playerName, scriptId = DEFAULT_SCRIPT_ID) {
     clearResume();
     const uid = await ensureAuth();
     const code = makeRoomCode();
@@ -221,7 +222,7 @@ export class FirebaseHostSession extends BaseFirebaseSession {
 
     const session = new FirebaseHostSession(saved.code, uid, saved.name || meta.storytellerName || "说书人");
     session.status = meta.status || "lobby";
-    session.scriptId = meta.scriptId || saved.scriptId || "trouble-brewing";
+    session.scriptId = meta.scriptId || saved.scriptId || DEFAULT_SCRIPT_ID;
     session.storytellerName = meta.storytellerName || session.name;
     session.storytellerUid = meta.storytellerUid || uid;
     session.storytellerMode = meta.storytellerMode || "human";
@@ -533,10 +534,12 @@ export class FirebaseHostSession extends BaseFirebaseSession {
     if (!this.core) return { ok: false, error: "游戏尚未开始" };
     return this.core.dispatchFor(this.uid, { type: "vote", up: !!up });
   }
-  slayerShot(target) {
+  /** 剧本声明的白天动作(如杀手开枪);actionType 来自 view.availableDayActions */
+  dayAction(actionType, picked) {
     if (this.mySeat === -1) return { ok: false, error: "说书人不能使用玩家能力" };
     if (!this.core) return { ok: false, error: "游戏尚未开始" };
-    return this.core.dispatchFor(this.uid, { type: "slayerShot", target });
+    const targets = Array.isArray(picked) ? picked : [picked];
+    return this.core.dispatchFor(this.uid, { type: actionType, target: targets[0], targets });
   }
   endDay() {
     return this.core ? this.core.dispatchStoryteller({ type: "endDay" }) : { ok: false, error: "游戏尚未开始" };
@@ -627,7 +630,7 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
       spectator: saved.mode === "multi-spectator"
     });
     session.status = finalMeta.status || "lobby";
-    session.scriptId = finalMeta.scriptId || saved.scriptId || "trouble-brewing";
+    session.scriptId = finalMeta.scriptId || saved.scriptId || DEFAULT_SCRIPT_ID;
     session.storytellerName = finalMeta.storytellerName || "说书人";
     session.storytellerUid = finalMeta.storytellerUid || "";
     session.storytellerMode = finalMeta.storytellerMode || "human";
@@ -683,9 +686,11 @@ export class FirebaseGuestSession extends BaseFirebaseSession {
     if (this.isSpectator) return { ok: false, error: "观众不能投票" };
     return this._pushAction({ kind: "action", action: { type: "vote", up } });
   }
-  slayerShot(target) {
+  /** 剧本声明的白天动作(如杀手开枪);actionType 来自 view.availableDayActions */
+  dayAction(actionType, picked) {
     if (this.isSpectator) return { ok: false, error: "观众不能使用玩家能力" };
-    return this._pushAction({ kind: "action", action: { type: "slayerShot", target } });
+    const targets = Array.isArray(picked) ? picked : [picked];
+    return this._pushAction({ kind: "action", action: { type: actionType, target: targets[0], targets } });
   }
   endDay() {
     return this._pushAction({ kind: "storytellerAction", action: { type: "endDay" } });

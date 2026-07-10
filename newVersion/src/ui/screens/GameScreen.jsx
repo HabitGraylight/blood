@@ -56,7 +56,7 @@ export function GameScreen({ session, onLeave }) {
   const savedHistory = useRef(new Set());
   useEffect(() => session.subscribe(() => force((x) => x + 1)), [session]);
 
-  // 目标选择模式: null | 'nominate' | 'slayer' | 'night'
+  // 目标选择模式: null | 'nominate' | 'dayAction' | 'night'
   const [select, setSelect] = useState(null); // { mode, picked: [], max, notSelf }
   const [toast, setToast] = useState("");
   const [showScriptModal, setShowScriptModal] = useState(false);
@@ -165,8 +165,9 @@ export function GameScreen({ session, onLeave }) {
     } else if (select.mode === "dayAction") {
       const count = select.action?.targetPolicy?.count || 1;
       if (picked.length !== count) return showToast("请选择目标玩家");
-      const fn = session[select.action.actionType];
-      res = typeof fn === "function" ? fn.call(session, picked[0]) : { error: "未知行动" };
+      res = typeof session.dayAction === "function"
+        ? session.dayAction(select.action.actionType, count === 1 ? picked[0] : picked)
+        : { error: "未知行动" };
     }
     if (res && res.error) showToast(res.error);
     else setSelect(null);

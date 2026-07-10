@@ -1,4 +1,5 @@
 ﻿import { GameCore, AI_PERSONAS } from "./gameCore.js";
+import { DEFAULT_SCRIPT_ID } from "../scripts/registry.js";
 import { createRng, randomSeed } from "../core/rng.js";
 
 const HUMAN_ID = "human";
@@ -19,7 +20,7 @@ export class LocalSession {
     this.aiDebugLog = !!(snapshot?.aiDebugLog ?? aiDebugLog);
 
     if (snapshot?.core) {
-      this.scriptId = snapshot.scriptId || snapshot.core.scriptId || "trouble-brewing";
+      this.scriptId = snapshot.scriptId || snapshot.core.scriptId || DEFAULT_SCRIPT_ID;
       this.core = GameCore.hydrate(snapshot.core, () => this._handleUpdate(), {
         aiDebugLog: { enabled: this.aiDebugLog, gameId: this.gameId }
       });
@@ -52,7 +53,7 @@ export class LocalSession {
       persona: null
     });
 
-    this.scriptId = scriptId || "trouble-brewing";
+    this.scriptId = scriptId || DEFAULT_SCRIPT_ID;
     this.core = new GameCore(players, () => this._handleUpdate(), {
       scriptId: this.scriptId,
       aiStoryteller,
@@ -139,8 +140,10 @@ export class LocalSession {
     return this.core.dispatchFor(HUMAN_ID, { type: "vote", up });
   }
 
-  slayerShot(target) {
-    return this.core.dispatchFor(HUMAN_ID, { type: "slayerShot", target });
+  /** 剧本声明的白天动作(如杀手开枪);actionType 来自 view.availableDayActions */
+  dayAction(actionType, picked) {
+    const targets = Array.isArray(picked) ? picked : [picked];
+    return this.core.dispatchFor(HUMAN_ID, { type: actionType, target: targets[0], targets });
   }
 
   endDay() {

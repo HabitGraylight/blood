@@ -18,6 +18,10 @@
  * - resumeHandlers: { [kind]: (ctx, decision, option) => void }
  *     角色裁量点(requestDecision 的 resume.kind)被说书人裁定后的恢复逻辑。
  *     "setup" 与 "night-info" 两种 kind 由引擎通用处理,不要占用。
+ * - buildNightInfoOptions(roleId, context) => { detail, options } | null
+ *     非 auto 模式下夜间信息角色的说书人候选项(见 trouble-brewing-info.js)。
+ * - checkWin(players, script, defaultCheckWin) => { winner, reason } | null
+ *     可选:覆盖默认胜负判定(默认为"恶魔死→善良胜;仅剩2人→邪恶胜")。
  *
  * 角色级 roles[roleId](夜间 hook 按 effectiveRole 查找,被动 hook 按真实 role 查找):
  * - queueWhenDead: bool                    死亡后仍进入夜间队列(如守鸦人)
@@ -40,22 +44,21 @@
  *
  * ctx 是引擎提供的行为上下文,见 engine.js 的 _buildBehaviorContext。
  */
-import { TEAM } from "../core/constants.js";
+import { TEAM, isDayActionable } from "../core/constants.js";
+import { registersAsDemon, registrationOf } from "../core/registration.js";
 import {
   washerwomanInfo, librarianInfo, investigatorInfo, chefInfo, empathInfo,
   fortuneTellerInfo, undertakerInfo, ravenkeeperInfo, spyGrimoire,
-  registersAsDemon, registrationOf
-} from "../core/info.js";
+  buildNightInfoCandidates
+} from "./trouble-brewing-info.js";
 import { effectiveRole } from "../core/setup.js";
 import {
   getMasterSeat, getStatus, hasStatus, isAbilityUsed, setAbilityUsed, setBelievedRole,
   setMasterSeat, setPoisonedBy, setProtectedBy, setRedHerring
 } from "../core/state.js";
 
-const DAY_ACTION_STAGES = ["discussion", "whispers", "nominations"];
-
 function dayActionable(ctx) {
-  return ctx.state.phase === "day" && DAY_ACTION_STAGES.includes(ctx.state.dayStage);
+  return isDayActionable(ctx.state);
 }
 
 /** 通用信息角色 hook:auto 模式直接结算,非 auto 模式交说书人从合法候选中裁量 */
@@ -545,5 +548,7 @@ export const TROUBLE_BREWING_BEHAVIORS = {
   finalizeSetup,
   setupSteps: SETUP_STEPS,
   actions: ACTIONS,
-  resumeHandlers: RESUME_HANDLERS
+  resumeHandlers: RESUME_HANDLERS,
+  /** 非 auto 模式下,引擎为夜间信息角色征询说书人时的候选项生成 */
+  buildNightInfoOptions: buildNightInfoCandidates
 };

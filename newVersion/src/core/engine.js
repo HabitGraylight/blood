@@ -14,9 +14,7 @@
 import { getScript, TEAM, roleName as scriptRoleName } from "../scripts/registry.js";
 import { assignRoles, effectiveRole, hasRealAbility } from "./setup.js";
 import { createRng, randomSeed } from "./rng.js";
-import {
-  minionFirstNightInfo, demonFirstNightInfo, buildNightInfoOptions
-} from "./info.js";
+import { minionFirstNightInfo, demonFirstNightInfo } from "./info.js";
 import { checkWin, resolveVoteResult } from "./rules.js";
 import { DAY_ACTION_STAGES, isDayActionable } from "./constants.js";
 import { hasStatus, normalizeGameState, setPoisonedBy, setProtectedBy } from "./state.js";
@@ -81,7 +79,6 @@ export class GameEngine {
       announcements: [],
       storytellerNotes: [],
       dayStageEndsAt: null,
-      mayorRedirectSeat: undefined,
       winner: null,
       winReason: null
     };
@@ -596,11 +593,14 @@ export class GameEngine {
 
   /**
    * 为夜间信息角色生成候选并挂起(候选唯一时直接结算不挂起)。
+   * 候选项由剧本的 behaviors.buildNightInfoOptions 生成,引擎不认识任何具体角色。
    * 返回 true 表示已挂起。
    */
   _requestInfoDecision(player, roleId, corrupt, targets) {
     const s = this.state;
-    const built = buildNightInfoOptions(roleId, {
+    const buildOptions = this.behaviors.buildNightInfoOptions;
+    if (typeof buildOptions !== "function") return false;
+    const built = buildOptions(roleId, {
       players: s.players,
       self: player,
       targets,

@@ -111,6 +111,10 @@ export const ROLES = {
   recluse: {
     id: "recluse", name: "隐士", team: TEAM.OUTSIDER, night: null, input: false,
     ability: "你可能被当作邪恶阵营、爪牙或恶魔,即使你已死亡。",
+    misregister: {
+      chance: 0.6, alignment: "evil",
+      teams: [{ team: TEAM.MINION, chance: 0.75 }, { team: TEAM.DEMON }]
+    },
     symbol: "隐"
   },
   saint: {
@@ -127,6 +131,10 @@ export const ROLES = {
   spy: {
     id: "spy", name: "间谍", team: TEAM.MINION, night: "both", input: false,
     ability: "每个夜晚,你可以查看魔典。你可能被当作善良阵营、村民或外来者,即使你已死亡。",
+    misregister: {
+      chance: 0.75, alignment: "good",
+      teams: [{ team: TEAM.TOWNSFOLK, chance: 0.8 }, { team: TEAM.OUTSIDER }]
+    },
     symbol: "谍"
   },
   scarletwoman: {
@@ -156,6 +164,18 @@ ROLES.imp.skipHints = {
   firstNight: "首夜是平安夜:恶魔不能杀人。从第二晚开始,每晚选择一名玩家杀死。"
 };
 
+/**
+ * AI 兜底启发式的夜间选目标策略(LLM 未配置/失败时使用):
+ * avoidEvilTeam 避开邪恶队友;notSelf 不选自己;
+ * selfTargetChance 有存活队友时以此概率选择自己(小恶魔传位)。
+ * 未声明的角色按角色定义的 notSelf 均匀随机。
+ */
+ROLES.imp.aiNightPolicy = { avoidEvilTeam: true, notSelf: true, selfTargetChance: 0.06 };
+ROLES.poisoner.aiNightPolicy = { avoidEvilTeam: true, notSelf: true };
+ROLES.monk.aiNightPolicy = { notSelf: true };
+ROLES.butler.aiNightPolicy = { notSelf: true };
+ROLES.ravenkeeper.aiNightPolicy = { notSelf: true };
+
 export const DAY_ACTIONS = [
   {
     actionType: "slayerShot",
@@ -169,7 +189,17 @@ export const DAY_ACTIONS = [
     publicClaimable: true,
     stages: ["discussion", "whispers", "nominations"],
     onceState: { roleId: "slayer" },
-    targetPolicy: { count: 1, aliveOnly: true, notSelf: true }
+    targetPolicy: { count: 1, aliveOnly: true, notSelf: true },
+    // AI 玩家使用该能力时的公开宣告与决策指引(LLM 提示词)
+    announceTemplate: "我是杀手,我对 {target} 开枪!",
+    aiGuide: [
+      "你的角色是杀手,整局限一次的公开开枪能力还没有用。现在决定要不要开枪:公开指认一名存活玩家,如果他是恶魔,他当场死亡、善良几乎立刻获胜;如果不是,什么都不会发生,而你的能力就此耗尽。",
+      "时机判断:",
+      "- 有较强证据指向某人是恶魔时,开枪是善良最干脆的斩杀手段。",
+      "- 残局(存活≤4)再捏着不用,能力会跟着你一起死掉;对最可能是恶魔的人开枪几乎总是正确的——即使打空,也排除了一个嫌疑。",
+      "- 多人强烈要求你开枪验证时,一直拒绝会让你自己成为头号嫌疑。",
+      "- 前中期证据不足时可以暂不开枪,继续收集信息。"
+    ].join("\n")
   }
 ];
 

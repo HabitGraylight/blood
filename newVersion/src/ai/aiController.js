@@ -8,7 +8,7 @@ import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier } from "./llm
 import {
   buildSystemPrompt, nightActionPrompt, speechPrompt,
   nominationPrompt, votePrompt, whisperPrompt, memoPrompt,
-  initiateWhisperPrompt, slayerShotPrompt
+  initiateWhisperPrompt, dayActionPrompt
 } from "./prompts.js";
 import { getScript, roleName as scriptRoleName } from "../scripts/registry.js";
 
@@ -152,27 +152,26 @@ export class AIPlayer {
     return this._heuristicNightAction(view, pa);
   }
 
+  /**
+   * 夜间选目标兜底启发式:策略由剧本角色定义的 aiNightPolicy 声明
+   * (avoidEvilTeam / notSelf / selfTargetChance),未声明时均匀随机。
+   */
   _heuristicNightAction(view, pa) {
-    switch (pa.roleId) {
-      case "imp": {
-        // 杀死非队友;偶尔传位(队友存活且随机)
-        const team = this._evilTeamSeats(view);
-        const aliveMinions = [...team].filter(
-          (s) => s !== this.seat && view.seats[s] && view.seats[s].alive
-        );
-        if (aliveMinions.length && this.rng.chance(0.06)) return [this.seat];
-        return this._pickTargets(view, 1, { avoidEvilTeam: true, notSelf: true });
-      }
-      case "poisoner":
-        return this._pickTargets(view, 1, { avoidEvilTeam: true, notSelf: true });
-      case "monk":
-      case "butler":
-      case "ravenkeeper":
-        return this._pickTargets(view, pa.targets, { notSelf: true });
-      case "fortuneteller":
-      default:
-        return this._pickTargets(view, pa.targets, { notSelf: pa.notSelf });
+    const script = getScript(view.scriptId);
+    const role = script.roles[pa.roleId] || {};
+    const policy = role.aiNightPolicy || {};
+    if (policy.selfTargetChance) {
+      // 如小恶魔传位:有存活队友时小概率选择自己
+      const team = this._evilTeamSeats(view);
+      const aliveMates = [...team].filter(
+        (s) => s !== this.seat && view.seats[s] && view.seats[s].alive
+      );
+      if (aliveMates.length && this.rng.chance(policy.selfTargetChance)) return [this.seat];
     }
+    return this._pickTargets(view, pa.targets, {
+      avoidEvilTeam: !!policy.avoidEvilTeam,
+      notSelf: policy.notSelf != null ? policy.notSelf : !!pa.notSelf
+    });
   }
 
   /* ---------------- 白天发言 ---------------- */
@@ -281,21 +280,23 @@ export class AIPlayer {
     return this.rng.chance(0.3 + 0.4 * this.traits.aggr);
   }
 
-  /* ---------------- 杀手开枪 ---------------- */
+  /* ---------------- 剧本白天动作(如杀手开枪) ---------------- */
 
   /**
-   * 自认为是杀手且能力未用时,决定是否公开开枪。
-   * @returns 目标座位(0起)或 null(暂不开枪)
+   * 决定是否使用某个剧本声明的白天主动能力。
+   * action 来自 view.availableDayActions,决策指引取自剧本配置的 aiGuide。
+   * @returns 目标座位(0起)或 null(暂不使用)
    */
-  async decideSlayerShot(view, chatHistory) {
+  async decideDayAction(view, chatHistory, action) {
+    const policy = action.targetPolicy || { count: 1, aliveOnly: true, notSelf: true };
     const candidates = view.seats
-      .filter((s) => s.alive && s.seat !== this.seat)
+      .filter((s) => (!policy.aliveOnly || s.alive) && (!policy.notSelf || s.seat !== this.seat))
       .map((s) => s.seat);
     if (!candidates.length) return null;
-    const result = await this._ask(view, slayerShotPrompt(view, chatHistory, candidates), {
+    const result = await this._ask(view, dayActionPrompt(view, chatHistory, candidates, action), {
       maxTokens: 200,
       temperature: 0.4,
-      task: "day-action:slayerShot"
+      task: `day-action:${action.actionType}`
     });
     if (result && result.target != null) {
       const seat = Number(result.target) - 1;

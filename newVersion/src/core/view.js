@@ -30,7 +30,10 @@ function dayActionsFor(state, me, script, myRole) {
     label: myRole === action.roleId ? action.label : (action.bluffLabel || action.label),
     confirmLabel: action.confirmLabel || action.label,
     hint: myRole === action.roleId ? (action.hint || "") : (action.bluffHint || action.hint || ""),
-    targetPolicy: action.targetPolicy || { count: 1, aliveOnly: true, notSelf: true }
+    targetPolicy: action.targetPolicy || { count: 1, aliveOnly: true, notSelf: true },
+    // AI 玩家决策所需的剧本配置(对真人玩家无影响)
+    announceTemplate: action.announceTemplate || null,
+    aiGuide: action.aiGuide || null
   }));
 }
 export function playerView(state, seat, scriptArg) {
@@ -72,7 +75,6 @@ export function playerView(state, seat, scriptArg) {
       alive: me.alive,
       ghostVote: me.ghostVote,
       usedAbility: isAbilityUsed(me, myRole),
-      slayerUsed: isAbilityUsed(me, "slayer"),
       master: getMasterSeat(me),
       privateLog: Array.isArray(me.privateLog) ? me.privateLog : [],
       evilInfo
@@ -123,9 +125,6 @@ export function playerView(state, seat, scriptArg) {
     canVote:
       !!state.currentVote &&
       state.currentVote.order[state.currentVote.index] === seat,
-    canSlay:
-      isDayActionable(state) &&
-      me.alive && !isAbilityUsed(me, "slayer"),
     // 白天是否可宣布黄昏(UI 再按 isHost 过滤;非房主玩家不会看到按钮)
     availableDayActions: dayActionsFor(state, me, script, myRole),
     canEndDay:
@@ -185,7 +184,6 @@ export function storytellerView(state, scriptArg) {
         master: getMasterSeat(p),
         redHerring: hasStatus(p, "redHerring") || p.redHerring,
         usedAbility: isAbilityUsed(p, p.role),
-        slayerUsed: isAbilityUsed(p, "slayer"),
         diedTonight: p.diedTonight,
         evilInfo: p.evilInfo
           ? {
@@ -239,7 +237,6 @@ export function spectatorView(state, scriptArg) {
     pendingAction: null,
     canNominate: false,
     canVote: false,
-    canSlay: false,
     availableDayActions: [],
     canEndDay: false,
     log: state.log.filter((l) => l.type !== "storyteller"),

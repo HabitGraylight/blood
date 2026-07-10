@@ -6,12 +6,13 @@
  * 行为准则与角色策略来自 prompts/ 目录的 markdown 文件,可直接编辑调优:
  * - prompts/ai-player/system.md   通用玩家行为准则
  * - prompts/ai-player/public-chat.md  公开发言任务模板
- * - prompts/roles/{roleId}.md     角色专属策略;缺失时用 default.md
+ * - prompts/roles/{scriptId}/{roleId}.md  按剧本的角色策略;
+ *   回退顺序: {scriptId}/{roleId}.md → {roleId}.md → {scriptId}/default.md → default.md
  */
 import { getScript, roleName as scriptRoleName, TEAM_LABELS } from "../scripts/registry.js";
 
-// Vite 在构建时把 markdown 内容内联进来
-const roleDocs = import.meta.glob("../../prompts/roles/*.md", {
+// Vite 在构建时把 markdown 内容内联进来(含剧本子目录)
+const roleDocs = import.meta.glob("../../prompts/roles/**/*.md", {
   eager: true, query: "?raw", import: "default"
 });
 const playerDocs = import.meta.glob("../../prompts/ai-player/*.md", {
@@ -21,9 +22,11 @@ const storytellerDocs = import.meta.glob("../../prompts/storyteller/*.md", {
   eager: true, query: "?raw", import: "default"
 });
 
-function roleDoc(roleId) {
+function roleDoc(scriptId, roleId) {
   return (
+    roleDocs[`../../prompts/roles/${scriptId}/${roleId}.md`] ||
     roleDocs[`../../prompts/roles/${roleId}.md`] ||
+    roleDocs[`../../prompts/roles/${scriptId}/default.md`] ||
     roleDocs["../../prompts/roles/default.md"] ||
     ""
   ).trim();
@@ -175,24 +178,32 @@ function stageAdvice(view) {
 /**
  * 关键数字与残局警告:全部在代码里算好,不依赖模型心算。
  * 只剩两名存活玩家时邪恶获胜,因此 3 人局的白天就是善良最后的机会。
+ * 剧本专属的残局建议(涉及具体角色的措辞)由 script.reference.endgameHints 提供。
  */
 function tempoBrief(view) {
   const alive = view.seats.filter((s) => s.alive).length;
   const execLine = Math.ceil(alive / 2);
+  const script = getScript(view.scriptId);
+  const hints = script.reference?.endgameHints || {};
   const lines = [`【关键数字】存活 ${alive} 人;处决需要至少 ${execLine} 票且为当日最高票。场上只剩 2 名存活玩家时邪恶立即获胜。`];
   if (alive === 3) {
     lines.push(
-      "【终局警告】只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会;逐一核对存活 3 人的身份声称——谁的角色/能力说辞对不上剧本、谁的信息链无人佐证、谁一直没被恶魔刀,谁就最可能是恶魔。不要因为某人发言混乱就投他,酒鬼和隐士本来就会混乱;要投的是逻辑上最可能是恶魔的人。若有存活玩家声称杀手且未开枪,让他当场对最可疑者开枪是免费的验证;声称杀手却反复拒绝开枪的人非常可疑。"
+      "【终局警告】只剩 3 人,恶魔几乎必在其中(除非它已死)。今天不处决任何人、或处决了好人 → 入夜后恶魔杀 1 人只剩 2 人,邪恶立即获胜。善良阵营:今天必须处决恶魔,这是唯一也是最后的机会;逐一核对存活 3 人的身份声称——谁的角色/能力说辞对不上剧本、谁的信息链无人佐证、谁一直没被恶魔刀,谁就最可能是恶魔。" +
+        (hints.three || "")
     );
   } else if (alive === 4) {
     lines.push(
-      "【残局警告】只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会,必须把票投给最可能是恶魔的人,而不是最吵的人。若有存活玩家声称杀手且未开枪,推动他当场开枪验证。"
+      "【残局警告】只剩 4 人,恶魔就在其中。今天处决错人,明晚恶魔再杀 1 人只剩 2 人,邪恶获胜——今天基本是善良最后一次纠错机会,必须把票投给最可能是恶魔的人,而不是最吵的人。" +
+        (hints.four || "")
     );
   } else if (alive === 5) {
     lines.push("【节奏提醒】只剩 5 人。若今天不处决,入夜再死 1 人就进入 4 人残局,善良容错只剩一次。");
   }
   if (view.phase === "day" && alive > 5) {
-    lines.push("【节奏提醒】白天的处决是善良阵营唯一的主动进攻手段;一天不处决,等于白送邪恶一个夜晚。处决可疑者哪怕错了,也能换来死亡信息(如送葬者查验、声称对错的验证)。");
+    lines.push(
+      "【节奏提醒】白天的处决是善良阵营唯一的主动进攻手段;一天不处决,等于白送邪恶一个夜晚。处决可疑者哪怕错了,也能换来死亡信息与声称验证。" +
+        (hints.pace || "")
+    );
   }
   return lines.join("\n");
 }
@@ -282,7 +293,7 @@ export function buildSystemPrompt(view, persona, memo = null) {
     you.alive ? "" : "【注意】你已死亡,仍可发言" + (you.ghostVote ? ",还有一次遗书票。" : ",且无法再投票。"),
     "",
     "【角色策略】",
-    roleDoc(you.role),
+    roleDoc(view.scriptId, you.role),
     "",
     `【阶段建议】${stageAdvice(view)}`
   ];
@@ -391,20 +402,21 @@ export function speechPrompt(view, chatHistory) {
   return PUBLIC_CHAT_TEMPLATE.replace("{{situation}}", buildSituation(view, chatHistory));
 }
 
-/** 杀手(或自认为是杀手的人)决定是否公开开枪 */
-export function slayerShotPrompt(view, chatHistory, candidates) {
+/**
+ * 剧本白天主动能力的使用决策(如 TB 杀手开枪)。
+ * 决策指引来自剧本 dayAction 配置的 aiGuide;缺省时用通用文案。
+ */
+export function dayActionPrompt(view, chatHistory, candidates, action) {
   const alive = view.seats.filter((s) => s.alive).length;
+  const guide = action.aiGuide ||
+    `你拥有白天主动能力「${action.label}」,尚未使用。请根据当前局势决定是否现在使用,以及对谁使用;不确定时可以暂不使用,保留能力。`;
   return [
     buildSituation(view, chatHistory),
     "",
-    "你的角色是杀手,整局限一次的公开开枪能力还没有用。现在决定要不要开枪:公开指认一名存活玩家,如果他是恶魔,他当场死亡、善良几乎立刻获胜;如果不是,什么都不会发生,而你的能力就此耗尽。",
-    "时机判断:",
-    "- 有较强证据指向某人是恶魔时,开枪是善良最干脆的斩杀手段。",
-    `- 残局(当前存活 ${alive} 人)再捏着不用,能力会跟着你一起死掉;存活≤4时,对最可能是恶魔的人开枪几乎总是正确的——即使打空,也排除了一个嫌疑。`,
-    "- 多人强烈要求你开枪验证时,一直拒绝会让你自己成为头号嫌疑。",
-    "- 前中期证据不足时可以暂不开枪,继续收集信息。",
+    guide,
+    `当前存活 ${alive} 人。`,
     `可选座位号(从1开始): ${candidates.map((c) => c + 1).join(", ")}`,
-    '只回复 JSON: {"target": 座位号或null(暂不开枪), "reason": "简短理由"}'
+    '只回复 JSON: {"target": 座位号或null(暂不使用), "reason": "简短理由"}'
   ].join("\n");
 }
 
@@ -508,8 +520,8 @@ export function buildGrimoireSituation(stView) {
       const marks = [];
       if (!s.alive) marks.push("死亡");
       if (s.poisonedBy != null) marks.push("中毒");
-      if (s.protectedBy != null) marks.push("被僧侣保护");
-      if (s.believedRole) marks.push(`酒鬼,自认为是${s.believedRole}`);
+      if (s.protectedBy != null) marks.push("受保护");
+      if (s.believedRole) marks.push(`伪装身份,自认为是${s.believedRole}`);
       if (s.redHerring) marks.push("红鲱鱼");
       return `${seatNo(s.seat)}号 ${s.name}: ${s.roleName}(${s.teamLabel},${s.alignmentLabel})${marks.length ? ` [${marks.join(",")}]` : ""}`;
     })
