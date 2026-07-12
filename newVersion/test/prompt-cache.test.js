@@ -5,7 +5,9 @@ import {
   buildSharedSystemBlocks,
   buildPlayerSystemBlocks,
   buildPublicChatBlock,
-  buildSystemPrompt
+  buildSystemPrompt,
+  buildSituation,
+  buildVoteHistory
 } from "../src/ai/prompts.js";
 import { enforceConstraints } from "../src/ai/aiController.js";
 
@@ -88,9 +90,19 @@ describe("assertNoLeak 安全断言", () => {
     expect(() => assertNoLeak("你的身份是占卜师", whitelist)).toThrow(/私密标记/);
   });
 
-  it("拒绝角色能力描述文本", () => {
+  it("拒绝 <script_roles> 区域之外的角色能力描述文本", () => {
     expect(() => assertNoLeak("【要点: 红鲱鱼】", whitelist)).toThrow(/能力描述/);
     expect(() => assertNoLeak(": 你每晚可以选择一个", whitelist)).toThrow(/能力描述/);
+    // 即使同时存在合法的 script_roles 区域,区域外的能力文本仍被拦截
+    expect(() =>
+      assertNoLeak("<script_roles>占卜师: 你每晚可以选择两名玩家</script_roles>\n某段落: 你每晚可以选择一个", whitelist)
+    ).toThrow(/能力描述/);
+  });
+
+  it("<script_roles> 区域内允许角色能力文本(公开的剧本角色表)", () => {
+    expect(() =>
+      assertNoLeak("<script_roles>\n占卜师: 你每晚可以选择两名玩家【要点: 红鲱鱼】\n</script_roles>", whitelist)
+    ).not.toThrow();
   });
 
   it("白名单内的角色纯名字不触发能力检测(角色名前缀不跟能力描述)", () => {
@@ -138,6 +150,26 @@ describe("buildSharedSystemBlocks(共享缓存块)", () => {
     expect(chatBlock).toContain("李四");
     expect(chatBlock).toContain("王五");
     expect(chatBlock).toContain("</public_chat>");
+  });
+
+  it("传入 currentDay 时只渲染当天公开聊天(历史天由摘要承担)", () => {
+    const chat = [
+      { fromSeat: 1, fromName: "李四", text: "第一天的旧发言", to: null, day: 1 },
+      { fromSeat: 2, fromName: "王五", text: "第二天的新发言", to: null, day: 2 },
+    ];
+    const chatBlock = buildPublicChatBlock(chat, 2);
+    expect(chatBlock).toContain("第二天的新发言");
+    expect(chatBlock).not.toContain("第一天的旧发言");
+  });
+
+  it("传入 selfSeat 时自己的发言标注(你自己)", () => {
+    const chat = [
+      { fromSeat: 0, fromName: "张三", text: "我的发言", to: null, day: 2 },
+      { fromSeat: 1, fromName: "李四", text: "别人的发言", to: null, day: 2 },
+    ];
+    const chatBlock = buildPublicChatBlock(chat, 2, 0);
+    expect(chatBlock).toContain("张三(你自己)");
+    expect(chatBlock).not.toContain("李四(你自己)");
   });
 
   it("无公开聊天时 buildPublicChatBlock 返回空字符串", () => {
@@ -204,74 +236,109 @@ describe("buildPlayerSystemBlocks(玩家专属块)", () => {
   });
 });
 
-/* ---------------- RAG 角色检索 ---------------- */
+/* ---------------- 全量角色表进 Block1 缓存 ---------------- */
 
-describe("RAG 角色检索(scriptRolesBriefRAG)", () => {
-  // scriptRolesBriefRAG is internal, tested through buildPlayerSystemBlocks
-  it("Block3 只注入自己角色+公开声称过的角色+伪装池角色,不含无关角色", () => {
-    const view = makeView({
-      you: {
-        role: "chef",
-        roleName: "厨师",
-        team: 0,
-        teamLabel: "村民",
-        alignment: "good",
-        alignmentLabel: "善良",
-        ability: "得知多少对邪恶玩家相邻",
-        alive: true,
-        ghostVote: false,
-        usedAbility: false,
-        master: null,
-        privateLog: [],
-        evilInfo: null,
-      },
-    });
-    const chatHistory = [
-      { fromSeat: 1, fromName: "李四", text: "我是占卜师,首夜查了", to: null },
-      { fromSeat: 2, fromName: "王五", text: "我跳洗衣妇", to: null },
-    ];
-
-    const blocks = buildPlayerSystemBlocks(view, "冷静理性", null, chatHistory);
+describe("全量角色表(script_roles)", () => {
+  it("Block1 含 <script_roles> 与全部22个角色名及能力", () => {
+    const view = makeView();
+    const blocks = buildSharedSystemBlocks(view, []);
     const text = blocks[0].text;
-
-    // 应包含:自己角色(厨师) + 声称角色(占卜师、洗衣妇)
-    expect(text).toContain("<known_role_abilities>");
-    expect(text).toContain("厨师");
-    expect(text).toContain("占卜师");
-    expect(text).toContain("洗衣妇");
-
-    // 不应包含未声称的无关角色(如士兵、隐士、圣徒等)
-    // 粗略检查:角色能力段长度应远小于全量表(~1500+ token)
-    const ragSection = text.split("<known_role_abilities>")[1]?.split("</known_role_abilities>")[0] || "";
-    expect(ragSection.length).toBeLessThan(1500);
+    expect(text).toContain("<script_roles>");
+    const script = getScript("trouble-brewing");
+    for (const r of Object.values(script.roles)) {
+      expect(text).toContain(r.name);
+    }
+    // 应含能力文本(而不仅是名字)
+    expect(text).toContain("红鲱鱼");
   });
 
-  it("邪恶玩家伪装池角色出现在RAG注入中", () => {
+  it("Block3 不再注入 known_role_abilities(角色能力已全量进 Block1)", () => {
+    const view = makeView();
+    const chatHistory = [
+      { fromSeat: 1, fromName: "李四", text: "我是占卜师,首夜查了", to: null },
+    ];
+    const blocks = buildPlayerSystemBlocks(view, "冷静理性", null, chatHistory);
+    expect(blocks[0].text).not.toContain("<known_role_abilities>");
+  });
+
+  it("邪恶阵营玩家 Block3 注入 <evil_strategy> 团队纪律", () => {
     const view = makeView({
       you: {
-        role: "fortuneteller",
-        roleName: "占卜师",
+        role: "poisoner",
+        roleName: "投毒者",
         team: 2,
         teamLabel: "爪牙",
         alignment: "evil",
         alignmentLabel: "邪恶",
-        ability: "每夜选择两名玩家,得知其中是否有恶魔",
+        ability: "每晚毒一人",
         alive: true,
         ghostVote: false,
         usedAbility: false,
         master: null,
         privateLog: [],
-        evilInfo: {
-          demonSeat: 2,
-          minionSeats: [0],
-          bluffs: ["soldier", "monk"],
-        },
+        evilInfo: { demonSeat: 2, minionSeats: [0], bluffs: ["soldier", "monk"] },
       },
     });
     const blocks = buildPlayerSystemBlocks(view, "阴险狡诈", null, []);
-    const text = blocks[0].text;
-    expect(text).toContain("士兵");
-    expect(text).toContain("僧侣");
+    expect(blocks[0].text).toContain("<evil_strategy>");
+  });
+
+  it("Block1 含 <tb_meta> 元游戏常识", () => {
+    const view = makeView();
+    const blocks = buildSharedSystemBlocks(view, []);
+    expect(blocks[0].text).toContain("<tb_meta>");
+    expect(blocks[0].text).toContain("信息折扣");
+  });
+});
+
+/* ---------------- 跨天投票历史 ---------------- */
+
+describe("vote_history 渲染", () => {
+  it("buildVoteHistory 渲染每天的提名、投票人与处决结果", () => {
+    const view = makeView({
+      voteHistory: [
+        {
+          day: 1,
+          nominations: [
+            { nominator: 0, nominee: 1, votes: 2, voters: [0, 2], result: "block" },
+          ],
+          executed: 1,
+        },
+        { day: 2, nominations: [], executed: null },
+      ],
+    });
+    const text = buildVoteHistory(view);
+    expect(text).toContain("第1天");
+    expect(text).toContain("1号张三 提名 2号李四");
+    expect(text).toContain("2票赞成(1号张三、3号王五)");
+    expect(text).toContain("当日处决: 2号李四");
+    expect(text).toContain("第2天");
+    expect(text).toContain("当天无人提名");
+    expect(text).toContain("当日无人被处决");
+  });
+
+  it("buildSituation 注入 <vote_history>,无历史时不注入", () => {
+    const withHistory = makeView({
+      voteHistory: [{ day: 1, nominations: [], executed: null }],
+    });
+    expect(buildSituation(withHistory, [])).toContain("<vote_history>");
+
+    const noHistory = makeView();
+    expect(buildSituation(noHistory, [])).not.toContain("<vote_history>");
+  });
+
+  it("buildSituation 已删除 recent_messages,私聊渲染进 your_whispers", () => {
+    const view = makeView();
+    const chat = [
+      { fromSeat: 1, fromName: "李四", text: "公开发言", to: null, day: 2 },
+      { fromSeat: 1, fromName: "李四", text: "悄悄告诉你", to: 0, day: 2 },
+      { fromSeat: 1, fromName: "李四", text: "别人的私聊", to: 2, day: 2 },
+    ];
+    const situation = buildSituation(view, chat);
+    expect(situation).not.toContain("<recent_messages>");
+    expect(situation).toContain("<your_whispers>");
+    expect(situation).toContain("悄悄告诉你");
+    expect(situation).not.toContain("别人的私聊");
   });
 });
 
@@ -283,8 +350,8 @@ describe("buildSystemPrompt(兼容回退)", () => {
     const text = buildSystemPrompt(view, "冷静", null);
     expect(typeof text).toBe("string");
     expect(text.length).toBeGreaterThan(500);
-    // 应同时包含公共内容(白名单)和私密内容(玩家标签)
-    expect(text).toContain("<role_whitelist>");
+    // 应同时包含公共内容(角色表)和私密内容(玩家标签)
+    expect(text).toContain("<script_roles>");
     expect(text).toContain("<your_identity>");
   });
 });

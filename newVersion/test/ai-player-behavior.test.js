@@ -59,7 +59,9 @@ describe("AI 玩家推理提示", () => {
     expect(prompt).toContain("事实抽取");
     expect(prompt).toContain("约束合并");
     expect(prompt).toContain("假设分支");
-    expect(prompt).toContain("不要把步骤逐条输出");
+    // reason-first 协议:analysis 私密推理字段在前,决策是其直接结论
+    expect(prompt).toContain('"analysis"');
+    expect(prompt).toContain("不许先拍板再找理由");
   });
 });
 

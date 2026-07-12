@@ -20,8 +20,17 @@ export const DEFAULT_LLM_CONFIG = {
   protocol: "anthropic",
   endpoint: env.VITE_MINIMAX_ENDPOINT || DEFAULT_ENDPOINT,
   model: env.VITE_MINIMAX_MODEL || DEFAULT_MODEL,
-  temperature: Number(env.VITE_LLM_TEMPERATURE || 0.9)
+  temperature: Number(env.VITE_LLM_TEMPERATURE || 0.7)
 };
+
+/**
+ * max_tokens 全局缩放系数(默认 1)。
+ * MiniMax-M3 是原生推理模型:若上游开启 thinking,思考内容会计入 max_tokens
+ * (本客户端只提取 text 块,thinking 被丢弃但仍占额度)。
+ * 观察 console 的 [LLM Probe] 日志:若出现 thinking 块且 output_tokens 远大于可见文本,
+ * 设 VITE_LLM_MAXTOKENS_SCALE=2 避免可见回复被思考挤掉而截断。
+ */
+const MAXTOKENS_SCALE = Math.max(0.5, Number(env.VITE_LLM_MAXTOKENS_SCALE || 1));
 
 export function getLLMConfig() {
   return { ...DEFAULT_LLM_CONFIG };
@@ -94,6 +103,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---------------- 缓存用量监控 ---------------- */
 
 let _cacheStats = { creation: 0, read: 0, calls: 0 };
+
+/** 最近一次请求的完整 usage(input/output/cache 四项)与非 text 块类型,供 debugLogger 记录 */
+let _lastUsage = null;
+
+export function getLastUsage() {
+  return _lastUsage ? { ..._lastUsage } : null;
+}
 
 /** 获取累计缓存用量统计(供测试/监控使用) */
 export function getCacheStats() {
@@ -172,7 +188,7 @@ async function anthropicRequest(cfg, messages, options, signal) {
     headers,
     body: JSON.stringify({
       model: cfg.model,
-      max_tokens: options.maxTokens || 600,
+      max_tokens: Math.round((options.maxTokens || 600) * MAXTOKENS_SCALE),
       temperature: options.temperature != null ? options.temperature : cfg.temperature,
       ...(system ? { system } : {}),
       messages: rest.map((m) => ({ role: m.role, content: m.content }))
@@ -206,6 +222,27 @@ async function anthropicRequest(cfg, messages, options, signal) {
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+
+  // thinking 探测:记录非 text 块类型与 usage,判断上游是否开启了原生推理
+  // (thinking 内容被本客户端丢弃,但 token 计入 max_tokens——见 MAXTOKENS_SCALE 说明)
+  const nonTextTypes = (data.content || [])
+    .filter((block) => block.type !== "text")
+    .map((block) => block.type);
+  _lastUsage = {
+    input_tokens: data.usage?.input_tokens || 0,
+    output_tokens: data.usage?.output_tokens || 0,
+    cache_creation_input_tokens: data.usage?.cache_creation_input_tokens || 0,
+    cache_read_input_tokens: data.usage?.cache_read_input_tokens || 0,
+    non_text_blocks: nonTextTypes,
+    visible_chars: text.length
+  };
+  if (nonTextTypes.length) {
+    console.debug(
+      `[LLM Probe] 检测到非text块: ${nonTextTypes.join(",")}; output_tokens=${_lastUsage.output_tokens}, 可见文本=${text.length}字 ` +
+      `(若 thinking 持续占大头,请设 VITE_LLM_MAXTOKENS_SCALE=2)`
+    );
+  }
+
   if (!text) throw new Error("LLM 返回为空");
   return text;
 }

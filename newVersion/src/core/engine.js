@@ -81,7 +81,8 @@ export class GameEngine {
       dayStageEndsAt: null,
       winner: null,
       winReason: null,
-      dailySummaries: [] // 每日摘要: [{day, text}], 白天结束时由 summarizer 填充
+      dailySummaries: [], // 每日摘要: [{day, text}], 白天结束时由 summarizer 填充
+      voteHistory: [] // 跨天投票档案: [{day, nominations:[{nominator,nominee,votes,voters,result}], executed}]
     };
     const engine = new GameEngine(state, rng);
     engine._log(`游戏开始:${players.length} 名玩家,剧本《${script.name}》`);
@@ -561,6 +562,23 @@ export class GameEngine {
   /** 入夜(若游戏尚未结束) */
   _nightfall() {
     if (this.state.winner) return;
+    const s = this.state;
+    // 白天结束、s.day 尚未推进:把当天提名投票(含逐人投票名单)归档到跨天投票历史。
+    // 投票站队是社交推理的核心公开信号,归档后供 AI 玩家 prompt 渲染 <vote_history>。
+    if (s.day > 0) {
+      if (!s.voteHistory) s.voteHistory = []; // 兼容旧存档
+      s.voteHistory.push({
+        day: s.day,
+        nominations: s.nominations.map((n) => ({
+          nominator: n.nominator,
+          nominee: n.nominee,
+          votes: n.votes,
+          voters: Array.isArray(n.voters) ? [...n.voters] : [],
+          result: n.result
+        })),
+        executed: s.executedToday
+      });
+    }
     this.state.night++;
     this._beginNight();
   }

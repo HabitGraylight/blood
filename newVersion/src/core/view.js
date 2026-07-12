@@ -92,6 +92,7 @@ export function playerView(state, seat, scriptArg) {
     })),
 
     dailySummaries: state.dailySummaries || [], // 公开历史每日摘要(对所有玩家安全可见)
+    voteHistory: state.voteHistory || [], // 跨天投票档案(纯公开行为,对所有玩家安全可见)
     nominations: state.nominations,
     nominatedToday: state.nominatedToday,
     nominatorsToday: state.nominatorsToday,
@@ -220,6 +221,7 @@ export function spectatorView(state, scriptArg) {
     currentVote: state.currentVote,
     onBlock: state.onBlock,
     nominations: state.nominations,
+    voteHistory: state.voteHistory || [],
     nominatedToday: state.nominatedToday,
     nominatorsToday: state.nominatorsToday,
     storytellerDeciding: !!state.pendingStorytellerDecision,

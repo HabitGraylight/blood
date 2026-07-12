@@ -34,6 +34,7 @@ function roleDoc(scriptId, roleId) {
 
 const PLAYER_SYSTEM = (playerDocs["../../prompts/ai-player/system.md"] || "").trim();
 const PUBLIC_CHAT_TEMPLATE = (playerDocs["../../prompts/ai-player/public-chat.md"] || "").trim();
+const EVIL_TEAM_DOC = (playerDocs["../../prompts/ai-player/evil-team.md"] || "").trim();
 
 function rulesBriefForScript(scriptId) {
   const script = getScript(scriptId);
@@ -45,31 +46,26 @@ function rulesBriefForScript(scriptId) {
   ].join("\n");
 }
 
-const REASONING_BRIEF = `发言前在心里完成推理,不要把步骤逐条输出:
-1. 事实抽取:先列出每名玩家的公开身份声明、能力信息、投票/提名、否认或改口,只使用上下文中出现过的内容。
-2. 声称审计:对照 <role_whitelist> ——角色名不在白名单里,这是重大邪恶信号,应当公开质疑;再对照 <known_role_abilities>(附在声称角色后面的真实能力),如果某人声称的角色能力与官方能力不一致,同样是关键信号;再对照 <player_count_config> 数一数各类声称数量,外来者声称超编可能说明有设置修正角色在场。
-3. 约束合并:把"二选一/至少一人/没有命中/确认某角色"等信息当作逻辑约束合并;如果一个候选被另一条可信信息支持,压力会转移到同组另一端。
-4. 假设分支:分别考虑"这条信息真""这条信息假或受误导""说话者在撒谎"三种分支,不要只挑对自己方便的一支。
-5. 死亡线索:恶魔倾向夜杀信息型角色。某人公开关键信息后当晚被杀,他的信息可信度上升;自称信息位却一直活到残局、从不被刀的人反而更可疑。
-6. 反证检查:结论出手前,检查它是否与已公开身份、已死亡名单、自己此前发言或最新回应冲突。
-7. 置信表达:证据链完整时可以明确推动;只有部分线索时用怀疑、追问或条件句;邪恶玩家可以撒谎,但谎言也要自洽。`;
+const REASONING_BRIEF = `每个任务的 JSON 都必须以 "analysis" 字段开头。analysis 是你的私密推理草稿:程序会读取但绝不会展示给任何玩家,你可以在里面直白写出怀疑、谎言计划和真实意图,120字以内。先写完 analysis,再填写后面的决策字段;决策必须是 analysis 推理的直接结论,不许先拍板再找理由。
 
-/** 角色名白名单:仅名字,不含能力(每条约5 token)。用于AI假名检测,共享缓存块安全合法。 */
-function scriptRoleNameWhitelist(view) {
-  const script = getScript(view.scriptId);
-  const byTeam = new Map();
-  for (const r of Object.values(script.roles)) {
-    if (!byTeam.has(r.team)) byTeam.set(r.team, []);
-    byTeam.get(r.team).push(r.name);
-  }
-  const lines = [`《${script.name}》全部合法角色名:`];
-  for (const [team, names] of byTeam) {
-    lines.push(`  ◆ ${TEAM_LABELS[team]}: ${names.join("、")}`);
-  }
-  return lines.join("\n");
-}
+在 analysis 里按需执行以下推理步骤(不必每步都写,挑当前决策最相关的2-4步):
+1. 事实抽取:相关玩家的身份声称、报出的信息、提名/投票行为、否认或改口,只用上下文里出现过的内容。
+2. 声称审计:对照 <script_roles> ——声称的角色名不在表里、或把能力说错,是重大邪恶信号;再对照 <player_count_config> 数各类声称数量,某类身份声称超编往往说明有修改配置的角色在场或有人撒谎。
+3. 信息折扣:任何信息先问一句"这条信息可能是假的吗?"——中毒、醉酒、误读、误报等剧本机制都会造出理直气壮的假信息(本剧本的具体假信息来源见剧本常识块)。两条信息矛盾时不必然有人撒谎,可能有一方被污染;一人独立错一次是污染,处处编造才是邪恶。
+4. 投票模式:看 <vote_history> ——谁总是跟着谁举手、关键处决时谁在压票/推票、谁一直在保护某个人、死人的遗书票花在了哪里。邪恶玩家的嘴可以伪装,票很难伪装。
+5. 约束合并:二选一/至少一人/没有命中/确认某角色是不同强度的逻辑约束,合并后再下结论;一端被可信信息排除,压力转移到另一端。
+6. 假设分支:至少考虑"信息为真""信息被污染""说话者撒谎"三个分支;评估当前最可能的1-2个"恶魔是谁"假设世界,选择在最可能世界里收益最大的行动。
+7. 死亡线索:恶魔倾向夜杀信息型角色。公开关键信息后当晚被刀,可信度上升;自称信息位却一直活到残局、从不被刀的人更可疑。
+8. 反证检查:结论是否与已公开身份、死亡名单、你此前发言冲突;邪恶玩家可以撒谎,但谎言也要自洽。
 
-/** RAG按需注入:只注入「自己角色 + 公开声称过的角色 + 邪恶伪装池」的能力文本,替代原先全量角色表(~1500+token) */
+对外展示的字段(speech/reply/whisper)只写角色要说的话,不要把 analysis 的内容原样贴进去。`;
+
+/**
+ * @deprecated RAG按需注入(只注入自己角色+公开声称+伪装池的能力)。
+ * TB 剧本仅 22 角色(~2000 token),全量放入 Block1 共享缓存后读价约1折,
+ * 且能支持"未被提及角色"的推理(数外来者推男爵、平安夜反推僧侣/士兵、猩红夫人接任),
+ * 已改为 scriptRolesBrief 全量进缓存。本函数保留给未来大角色量剧本重启用。
+ */
 function scriptRolesBriefRAG(view, chatHistory) {
   const script = getScript(view.scriptId);
   const roleSet = new Set();
@@ -113,7 +109,7 @@ function scriptRolesBriefRAG(view, chatHistory) {
   return lines.join("\n");
 }
 
-/** 剧本角色速查表(保留为兼容回退,新代码用 scriptRoleNameWhitelist + scriptRolesBriefRAG) */
+/** 剧本角色全量速查表:进 Block1 共享缓存(<script_roles>)。角色表是公开信息(真实游戏人手一张官方角色卡),不构成泄露。 */
 function scriptRolesBrief(view) {
   const script = getScript(view.scriptId);
   const byTeam = new Map();
@@ -225,18 +221,19 @@ export function assertNoLeak(sharedText, whitelistedRoleNames = []) {
     }
   }
 
-  // 能力文本检测:共享块不应包含角色能力详情(白名单纯名字OK)
+  // 能力文本检测:剧本角色表(<script_roles>)是公开信息(真实游戏人手一张官方角色卡),
+  // 允许包含全部角色能力;但该区域之外的共享文本仍不得混入能力描述——
+  // 意外泄漏(如把某玩家的身份能力拼进共享块)依旧会被拦截,保护不降级。
+  const outsideScriptRoles = sharedText.replace(/<script_roles>[\s\S]*?<\/script_roles>/g, "");
   const abilityPatterns = [
     /[：:]\s*你\s*(每晚|可以|选择|能够)/,
     /【要点:/,
     /真实能力:/,
   ];
-  // 构造白名单名字的正则,用于排除误报
-  const nameSet = new Set(whitelistedRoleNames);
   for (const p of abilityPatterns) {
-    if (p.test(sharedText)) {
+    if (p.test(outsideScriptRoles)) {
       throw new Error(
-        `assertNoLeak: 共享缓存块中发现角色能力描述文本 —— 角色能力属于私密信息,请将其移到动态块(Block 3)或RAG检索中。`
+        `assertNoLeak: 共享缓存块的 <script_roles> 区域之外发现角色能力描述文本 —— 请将其移入 <script_roles> 或动态块(Block 3)。`
       );
     }
   }
@@ -261,6 +258,13 @@ function renderMemo(view, memo) {
     for (const s of view.seats) {
       const note = memo.players[String(seatNo(s.seat))] || memo.players[seatNo(s.seat)];
       if (note) lines.push(`  - ${seatNo(s.seat)}号 ${s.name}${s.alive ? "" : "(已死)"}: ${String(note).slice(0, 80)}`);
+    }
+    if (Array.isArray(memo.worlds) && memo.worlds.length) {
+      memo.worlds.forEach((w, i) => {
+        if (w && w.demon != null) {
+          lines.push(`  - 假设世界${i + 1}(置信${w.confidence || "中"}): 恶魔=${w.demon}号, ${String(w.story || "").slice(0, 60)}`);
+        }
+      });
     }
     if (memo.self) lines.push(`  - 你自己的声称/承诺: ${String(memo.self).slice(0, 80)}`);
     if (memo.plan) lines.push(`  - 你的计划与首要怀疑: ${String(memo.plan).slice(0, 100)}`);
@@ -315,6 +319,39 @@ function tempoBrief(view) {
       "白天的处决是善良阵营唯一的主动进攻手段;一天不处决,等于白送邪恶一个夜晚。" +
         (hints.pace || "")
     );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * 跨天投票档案渲染:每天谁提名谁、谁投了赞成票、结果、当日处决。
+ * 全部是公开行为——"嘴可以伪装,票很难伪装",是分析阵营的第一信号。
+ */
+export function buildVoteHistory(view) {
+  const history = view.voteHistory || [];
+  if (!history.length) return "";
+  const lines = ["历史投票记录(每一票都是公开行为,注意谁总跟着谁举手、关键处决时谁在压票/推票):"];
+  for (const dayRec of history) {
+    lines.push(`第${dayRec.day}天:`);
+    if (!dayRec.nominations || !dayRec.nominations.length) {
+      lines.push("  - 当天无人提名");
+    } else {
+      for (const n of dayRec.nominations) {
+        const nominator = view.seats[n.nominator];
+        const nominee = view.seats[n.nominee];
+        const voterNames = (n.voters || []).map((s) => `${seatNo(s)}号${view.seats[s] ? view.seats[s].name : "?"}`);
+        const resultText = n.result === "block" ? "待处决" : n.result === "tie" ? "平票" : "未达处决线";
+        lines.push(
+          `  - ${seatNo(n.nominator)}号${nominator ? nominator.name : "?"} 提名 ${seatNo(n.nominee)}号${nominee ? nominee.name : "?"}: ${n.votes}票赞成${voterNames.length ? `(${voterNames.join("、")})` : ""} → ${resultText}`
+        );
+      }
+    }
+    if (dayRec.executed != null) {
+      const p = view.seats[dayRec.executed];
+      lines.push(`  当日处决: ${seatNo(dayRec.executed)}号${p ? p.name : "?"}`);
+    } else {
+      lines.push("  当日无人被处决");
+    }
   }
   return lines.join("\n");
 }
@@ -396,8 +433,10 @@ export function buildSharedSystemBlocks(view, chatHistory) {
   const parts = [
     `<behavior_rules>\n${PLAYER_SYSTEM}\n</behavior_rules>`,
     `<script_rules>\n${rulesBriefForScript(view.scriptId)}\n</script_rules>`,
-    `<role_whitelist>\n${scriptRoleNameWhitelist(view)}\n</role_whitelist>`,
+    `<script_roles>\n${scriptRolesBrief(view)}\n</script_roles>`,
     compositionBrief(view) ? `<player_count_config>\n${compositionBrief(view)}\n</player_count_config>` : "",
+    // 剧本元游戏常识(纯公开知识,老玩家共识),由剧本 reference.metaBrief 提供,缺省不渲染
+    script.reference?.metaBrief ? `<tb_meta>\n${script.reference.metaBrief}\n</tb_meta>` : "",
     `<reasoning_method>\n${REASONING_BRIEF}\n</reasoning_method>`,
   ];
 
@@ -419,16 +458,26 @@ export function buildSharedSystemBlocks(view, chatHistory) {
 
 /**
  * 构建当天公开聊天块(放入 user 消息,避免 MiniMax 对 system 段的严格内容审核触发 new_sensitive)。
+ * 只保留当天发言:历史天已由 <daily_summaries> + <claim_summary> + <vote_history> 压缩承担,
+ * 全量注入既浪费 token 又稀释注意力。自己的发言标注"(你自己)"供身份锚定。
  * 返回纯文本字符串,调用方拼入 user 消息中。
+ * @param {Array} chatHistory 完整聊天记录
+ * @param {number} [currentDay] 当前天数;提供时只保留 c.day === currentDay 的公开发言
+ * @param {number} [selfSeat] 自己的座位号(0起),用于标注"(你自己)"
  */
-export function buildPublicChatBlock(chatHistory) {
-  const publicChats = (chatHistory || []).filter((c) => c.to == null);
+export function buildPublicChatBlock(chatHistory, currentDay, selfSeat) {
+  let publicChats = (chatHistory || []).filter((c) => c.to == null);
+  if (currentDay != null) {
+    publicChats = publicChats.filter((c) => c.day == null || c.day === currentDay);
+  }
+  publicChats = publicChats.slice(-120);
   if (!publicChats.length) return "";
   const chatLines = publicChats.map((c) => {
-    const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}`;
+    const isSelf = selfSeat != null && c.fromSeat === selfSeat;
+    const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}${isSelf ? "(你自己)" : ""}`;
     return `  ${who}: ${c.text}`;
   });
-  return `<public_chat>\n${chatLines.join("\n")}\n</public_chat>`;
+  return `<public_chat>\n今天的公开发言(按时间排序,最后几条最新;标注"(你自己)"的是你说过的话):\n${chatLines.join("\n")}\n</public_chat>`;
 }
 
 /**
@@ -447,10 +496,6 @@ export function buildPlayerSystemBlocks(view, persona, memo, chatHistory) {
     `<your_identity>\n  身份: ${you.roleName}(${you.teamLabel},${you.alignmentLabel}阵营)\n  能力: ${you.ability}\n  ${you.alive ? "" : "你已死亡" + (you.ghostVote ? ",还有一次遗书票" : ",无法再投票")}\n</your_identity>`,
   ];
 
-  // RAG 检索
-  const ragRoles = scriptRolesBriefRAG(view, chatHistory);
-  if (ragRoles) parts.push(`<known_role_abilities>\n${ragRoles}\n</known_role_abilities>`);
-
   parts.push(
     `<role_strategy>\n${roleDoc(view.scriptId, you.role)}\n</role_strategy>`,
     `<stage_advice>${stageAdvice(view)}</stage_advice>`
@@ -464,6 +509,7 @@ export function buildPlayerSystemBlocks(view, persona, memo, chatHistory) {
       const script = getScript(view.scriptId);
       parts.push(`<bluffs>${you.evilInfo.bluffs.map((id) => scriptRoleName(script, id)).join("、")}</bluffs>`);
     }
+    if (EVIL_TEAM_DOC) parts.push(`<evil_strategy>\n${EVIL_TEAM_DOC}\n</evil_strategy>`);
   }
 
   if (you.privateLog.length) {
@@ -508,11 +554,15 @@ export function buildSituation(view, chatHistory) {
   }
 
   if (view.nominations.length) {
-    const nomLines = view.nominations.map(
-      (n) => `  ${view.seats[n.nominator].name} 提名 ${view.seats[n.nominee].name}: ${n.votes}票 (${n.result === "block" ? "待处决" : n.result === "tie" ? "平票" : "未通过"})`
-    );
+    const nomLines = view.nominations.map((n) => {
+      const voterNames = (n.voters || []).map((s) => `${seatNo(s)}号${view.seats[s] ? view.seats[s].name : "?"}`);
+      return `  ${view.seats[n.nominator].name} 提名 ${view.seats[n.nominee].name}: ${n.votes}票${voterNames.length ? `(${voterNames.join("、")})` : ""} (${n.result === "block" ? "待处决" : n.result === "tie" ? "平票" : "未通过"})`;
+    });
     parts.push(`<nominations>\n${nomLines.join("\n")}\n</nominations>`);
   }
+
+  const voteHistory = buildVoteHistory(view);
+  if (voteHistory) parts.push(`<vote_history>\n${voteHistory}\n</vote_history>`);
 
   parts.push(`<critical_numbers>\n${tempoBrief(view)}\n</critical_numbers>`);
 
@@ -533,17 +583,21 @@ export function buildSituation(view, chatHistory) {
     parts.push(`<your_recent_speech>\n${mineLines.join("\n")}\n</your_recent_speech>`);
   }
 
-  if (chatHistory && chatHistory.length) {
-    const msgLines = chatHistory.slice(-40).map((c) => {
+  // 私聊只保留涉及自己的最近10条(公开发言由 user 消息里的 <public_chat> 承担,不再重复注入)
+  const myWhispers = (chatHistory || [])
+    .filter((c) => c.to != null && (c.to === view.seat || c.fromSeat === view.seat))
+    .slice(-10);
+  if (myWhispers.length) {
+    const whisperLines = myWhispers.map((c) => {
       const isSelf = c.fromSeat === view.seat;
       const who = `${c.fromSeat != null ? `${seatNo(c.fromSeat)}号 ` : ""}${c.fromName}${isSelf ? "(你自己)" : ""}`;
-      const dm = c.to == null ? "" : isSelf ? `(你私聊${seatNo(c.to)}号)` : "(私聊你)";
+      const dm = isSelf ? `(你私聊${seatNo(c.to)}号)` : "(私聊你)";
       return `  ${who}${dm}: ${c.text}`;
     });
-    parts.push(`<recent_messages>\n${msgLines.join("\n")}\n</recent_messages>`);
+    parts.push(`<your_whispers>\n你参与的私聊(其他人看不到):\n${whisperLines.join("\n")}\n</your_whispers>`);
   }
 
-  parts.push(`<identity_anchor>你是 ${seatNo(view.seat)}号「${view.name}」。上面 recent_messages 中只有标注"(你自己)"的才是你说过的话;其他人的发言、计划、身份声称都不是你的,绝不能用第一人称复述。</identity_anchor>`);
+  parts.push(`<identity_anchor>你是 ${seatNo(view.seat)}号「${view.name}」。<public_chat> 和 <your_whispers> 中只有标注"(你自己)"的才是你说过的话;其他人的发言、计划、身份声称都不是你的,绝不能用第一人称复述。</identity_anchor>`);
 
   return parts.join("\n\n");
 }
@@ -555,9 +609,10 @@ export function nightActionPrompt(view, pendingAction) {
     buildSituation(view, []),
     "",
     `现在是夜晚,轮到你行动:${pendingAction.prompt}。`,
+    "参考你的 <role_strategy> 中的夜间行动指引选择目标。",
     `从【存活玩家】中选择 ${targets} 名(使用座位表中的座位号,从1开始)。不要选择已死亡的玩家,那会浪费你的能力。`,
     `可选座位号: ${alive.filter((s) => !pendingAction.notSelf || s.seat !== view.seat).map((s) => seatNo(s.seat)).join(", ")}`,
-    `只回复 JSON: {"targets": [座位号${targets === 2 ? ",座位号" : ""}], "reason": "简短理由"}`
+    `只回复 JSON: {"analysis": "私密推理:选谁、为什么,120字内", "targets": [座位号${targets === 2 ? ",座位号" : ""}]}`
   ].join("\n");
 }
 
@@ -579,7 +634,7 @@ export function dayActionPrompt(view, chatHistory, candidates, action) {
     guide,
     `当前存活 ${alive} 人。`,
     `可选座位号(从1开始): ${candidates.map((c) => c + 1).join(", ")}`,
-    '只回复 JSON: {"target": 座位号或null(暂不使用), "reason": "简短理由"}'
+    '只回复 JSON: {"analysis": "私密推理:现在用还是保留、对谁用、依据什么,120字内", "target": 座位号或null(暂不使用)}'
   ].join("\n");
 }
 
@@ -599,7 +654,7 @@ export function nominationPrompt(view, chatHistory, candidates) {
     "现在是提名阶段。你可以提名一名存活玩家送上处决台,或选择不提名。",
     factionLine,
     `可提名的座位号(从1开始,与座位表一致): ${candidates.map((c) => c + 1).join(", ")}`,
-    '只回复 JSON: {"nominate": 座位号或null, "reason": "简短理由"}'
+    '只回复 JSON: {"analysis": "私密推理:我最怀疑谁、证据是什么、提名的收益与风险,120字内", "nominate": 座位号或null}'
   ].join("\n");
 }
 
@@ -621,7 +676,7 @@ export function votePrompt(view, chatHistory, voteCtx) {
     `${nominator.name} 提名了 ${nominee.name},正在依次投票,目前 ${votesSoFar} 票赞成;处决线是 ${execLine} 票且需超过当日最高票。轮到你举手表决。`,
     endgameLine,
     ghostLine,
-    '只回复 JSON: {"vote": true或false, "reason": "简短理由"}'
+    '只回复 JSON: {"analysis": "私密推理:他是恶魔的概率、投票模式给了什么证据、投错的代价,120字内", "vote": true或false}'
   ].filter(Boolean).join("\n");
 }
 
@@ -631,7 +686,7 @@ export function whisperPrompt(view, chatHistory, fromName, text) {
     "",
     `${fromName} 私聊你说:"${text}"。请回复他(20-60字),注意私聊内容其他人看不到,可以交换情报或试探/欺骗。`,
     "红线:你声称的信息只能来自【你的私密信息】列表,善良阵营不得编造不存在的查验结果;邪恶阵营可以撒谎,但必须与你公开声称的身份和之前说过的话自洽。",
-    '只回复 JSON: {"reply": "你的回复"}'
+    '只回复 JSON: {"analysis": "私密推理:他想从我这得到什么、我要透露/隐瞒/试探什么,120字内", "reply": "你的回复"}'
   ].join("\n");
 }
 
@@ -647,7 +702,7 @@ export function initiateWhisperPrompt(view, chatHistory, target) {
     "",
     `你决定主动私聊 ${target.name}。${goal}`,
     "写一条自然的开场私聊(20-60字),像真人玩家发消息,直接进入话题。",
-    '只回复 JSON: {"whisper": "私聊内容"}'
+    '只回复 JSON: {"analysis": "私密推理:这次私聊要达成什么目标,120字内", "whisper": "私聊内容"}'
   ].join("\n");
 }
 
@@ -660,9 +715,9 @@ export function memoPrompt(view, chatHistory, memo) {
     "",
     prev ? `【你此前的档案】\n${prev}` : "",
     "这个白天结束了。请更新你的推理档案:对每名玩家写一行(不超过40字),内容按需包含:声称的角色、报出的关键信息、与其他信息的矛盾、你判断的可信度(高/中/低/确认邪恶等)。",
-    "要求:1) 合并旧档案,不要丢掉旧事实,除非有人明确改口或被证伪(那就记录改口本身,改口是重大嫌疑信号) 2) 记录必须忠实原话,二选一信息不能写成确认 3) self 记你自己公开声称/承诺过的内容,后续发言不能自相矛盾 4) plan 记你明天的计划和当前最怀疑的人及理由。",
+    "要求:1) 合并旧档案,不要丢掉旧事实,除非有人明确改口或被证伪(那就记录改口本身,改口是重大嫌疑信号) 2) 记录必须忠实原话,二选一信息不能写成确认 3) self 记你自己公开声称/承诺过的内容,后续发言不能自相矛盾 4) worlds 给出当前最可能的1-3个假设世界:恶魔是谁、为什么(谁在配合撒谎、哪些信息因此是假的),明天的发言、提名、投票都应在最可能世界里选收益最大的行动 5) plan 记你明天的计划和当前最怀疑的人及理由。",
     `只回复一个 JSON 对象,players 的键是座位号(${seatKeys}),值是那名玩家的一行档案。格式示例:`,
-    '{"players": {"1": "声称图书管理员;首夜查到2/8号有隐士;可信度中", "2": "..."}, "self": "你自己的声称与承诺", "plan": "明天的计划与首要怀疑对象"}'
+    '{"players": {"1": "声称图书管理员;首夜查到2/8号有隐士;可信度中", "2": "..."}, "worlds": [{"demon": "5", "story": "5号信息前后矛盾且3号一直保他,3号可能是爪牙", "confidence": "高"}], "self": "你自己的声称与承诺", "plan": "明天的计划与首要怀疑对象"}'
   ].filter(Boolean).join("\n");
 }
 

@@ -4,7 +4,7 @@
  * 配置了 LLM 时用大模型推理;否则回退到启发式策略,保证离线可玩。
  * LLM 调用失败也会静默回退,游戏永远不会卡死。
  */
-import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier } from "./llm.js";
+import { chatComplete, extractJSON, isLLMConfigured, llmBudgetTier, getLastUsage } from "./llm.js";
 import {
   buildSystemPrompt, buildSharedSystemBlocks, buildPlayerSystemBlocks,
   buildPublicChatBlock,
@@ -76,7 +76,8 @@ export class AIPlayer {
     const systemBlocks = [...sharedBlocks, ...playerBlocks];
 
     // 当天公开聊天放在 user 消息中(避免 MiniMax 对 system 段严格审核触发 new_sensitive)
-    const chatBlock = buildPublicChatBlock(chatHistory);
+    // 只注入当天:历史天由 daily_summaries/claim_summary/vote_history 压缩承担
+    const chatBlock = buildPublicChatBlock(chatHistory, view.day, view.seat);
     const fullUserPrompt = chatBlock
       ? `${chatBlock}\n\n${userPrompt}`
       : userPrompt;
@@ -100,7 +101,7 @@ export class AIPlayer {
 
     try {
       let text = await chatComplete(messages, { ...options, systemBlocks });
-      await this.debugLogger?.record({ ...logBase, output: text });
+      await this.debugLogger?.record({ ...logBase, output: text, usage: getLastUsage() });
       let parsed = extractJSON(text);
       if (!parsed) {
         const retryMessages = [
@@ -109,7 +110,7 @@ export class AIPlayer {
           { role: "user", content: "你的回复无法解析。只输出一个 JSON 对象,不要输出任何其他文字。" }
         ];
         text = await chatComplete(retryMessages, { ...options, systemBlocks, temperature: 0.3 });
-        await this.debugLogger?.record({ ...logBase, task: `${task}:parse-retry`, input: { systemBlocks, messages: retryMessages }, output: text });
+        await this.debugLogger?.record({ ...logBase, task: `${task}:parse-retry`, input: { systemBlocks, messages: retryMessages }, output: text, usage: getLastUsage() });
         parsed = extractJSON(text);
       }
       return parsed;
@@ -122,7 +123,7 @@ export class AIPlayer {
   async updateMemo(view, chatHistory) {
     if (llmBudgetTier() === "low") return;
     const result = await this._ask(view, memoPrompt(view, chatHistory, this.memo), {
-      maxTokens: 700,
+      maxTokens: 900,
       temperature: 0.3,
       chatHistory,
       task: "memo"
@@ -135,9 +136,21 @@ export class AIPlayer {
         if (typeof v === "string" && v.trim()) players[k] = v.trim().slice(0, 80);
       }
       if (Object.keys(players).length) {
+        // 假设世界:当前最可能的"恶魔是谁"分析,最多3个,跨天推理连贯性的锚点
+        const worlds = Array.isArray(result.worlds)
+          ? result.worlds
+              .filter((w) => w && w.demon != null)
+              .slice(0, 3)
+              .map((w) => ({
+                demon: String(w.demon).slice(0, 4),
+                story: typeof w.story === "string" ? w.story.trim().slice(0, 60) : "",
+                confidence: ["高", "中", "低"].includes(w.confidence) ? w.confidence : "中"
+              }))
+          : [];
         this.memo = {
           updatedDay: view.day,
           players,
+          worlds,
           self: typeof result.self === "string" ? result.self.trim().slice(0, 80) : "",
           plan: typeof result.plan === "string" ? result.plan.trim().slice(0, 100) : ""
         };
@@ -190,7 +203,7 @@ export class AIPlayer {
 
   async decideNightAction(view) {
     const pa = view.pendingAction;
-    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.6, chatHistory: [], task: `night:${pa.roleId}` });
+    const result = await this._ask(view, nightActionPrompt(view, pa), { temperature: 0.3, chatHistory: [], task: `night:${pa.roleId}` });
     if (result && Array.isArray(result.targets)) {
       // 提示词中的座位号从 1 开始(与界面一致),转回引擎的 0 起座位
       // 只接受存活目标:对死者使用能力等于浪费(LLM 偶尔会忽视死亡标记)
@@ -229,7 +242,7 @@ export class AIPlayer {
   /* ---------------- 白天发言 ---------------- */
 
   async speak(view, chatHistory) {
-    const result = await this._ask(view, speechPrompt(view, chatHistory), { maxTokens: 300, chatHistory, task: "speech" });
+    const result = await this._ask(view, speechPrompt(view, chatHistory), { maxTokens: 800, temperature: 0.75, chatHistory, task: "speech" });
     if (result && typeof result.speech === "string" && result.speech.trim()) {
       return result.speech.trim().slice(0, 200);
     }
@@ -275,7 +288,7 @@ export class AIPlayer {
       .map((s) => s.seat);
     if (!candidates.length) return null;
 
-    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.6, chatHistory, task: "nomination" });
+    const result = await this._ask(view, nominationPrompt(view, chatHistory, candidates), { temperature: 0.35, chatHistory, task: "nomination" });
     if (result !== null && "nominate" in result) {
       const n = result.nominate;
       if (n === null) return null;
@@ -307,7 +320,7 @@ export class AIPlayer {
     if (llmBudgetTier() === "low" && !this._isCriticalVote(view, cv)) {
       return this._heuristicVote(view, cv);
     }
-    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 200, temperature: 0.55, chatHistory, task: "vote" });
+    const result = await this._ask(view, votePrompt(view, chatHistory, cv), { maxTokens: 500, temperature: 0.3, chatHistory, task: "vote" });
     if (result && typeof result.vote === "boolean") return result.vote;
     return this._heuristicVote(view, cv);
   }
@@ -346,8 +359,8 @@ export class AIPlayer {
       .map((s) => s.seat);
     if (!candidates.length) return null;
     const result = await this._ask(view, dayActionPrompt(view, chatHistory, candidates, action), {
-      maxTokens: 200,
-      temperature: 0.4,
+      maxTokens: 500,
+      temperature: 0.3,
       chatHistory,
       task: `day-action:${action.actionType}`
     });
@@ -367,7 +380,8 @@ export class AIPlayer {
    */
   async initiateWhisper(view, chatHistory, target) {
     const result = await this._ask(view, initiateWhisperPrompt(view, chatHistory, target), {
-      maxTokens: 200,
+      maxTokens: 450,
+      temperature: 0.7,
       chatHistory,
       task: "whisper:initiate"
     });
@@ -402,7 +416,8 @@ export class AIPlayer {
 
   async replyWhisper(view, chatHistory, fromName, text) {
     const result = await this._ask(view, whisperPrompt(view, chatHistory, fromName, text), {
-      maxTokens: 200,
+      maxTokens: 450,
+      temperature: 0.7,
       chatHistory,
       task: "whisper:reply"
     });

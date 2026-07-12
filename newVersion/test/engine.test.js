@@ -132,6 +132,39 @@ describe("完整对局流程", () => {
     expect(engine.state.night).toBe(2);
   });
 
+  it("入夜时当天提名投票归档到 voteHistory(含投票人),次日 nominations 清空", () => {
+    const engine = GameEngine.create(makePlayers(7), { seed: 7, fixedRoles: ROLES_7 });
+    autoNight(engine);
+    engine.dispatch({ type: "nominate", nominator: 0, nominee: 5 });
+    while (engine.state.currentVote) {
+      const seat = engine.state.currentVote.order[engine.state.currentVote.index];
+      engine.dispatch({ type: "vote", seat, up: true });
+    }
+    const votersBefore = engine.state.nominations[0].voters;
+    expect(votersBefore.length).toBeGreaterThan(0);
+    engine.dispatch({ type: "endDay" });
+
+    // 白天结束入夜:第1天档案已归档
+    expect(engine.state.voteHistory.length).toBe(1);
+    const rec = engine.state.voteHistory[0];
+    expect(rec.day).toBe(1);
+    expect(rec.nominations.length).toBe(1);
+    expect(rec.nominations[0].nominator).toBe(0);
+    expect(rec.nominations[0].nominee).toBe(5);
+    expect(rec.nominations[0].voters).toEqual(votersBefore);
+    expect(rec.executed).toBe(5);
+
+    // 次日 dawn:当天提名清空,但历史档案保留
+    autoNight(engine);
+    expect(engine.state.phase).toBe("day");
+    expect(engine.state.nominations).toEqual([]);
+    expect(engine.state.voteHistory.length).toBe(1);
+
+    // 玩家视图暴露 voteHistory(公开信息)
+    const pv = playerView(engine.state, 0);
+    expect(pv.voteHistory.length).toBe(1);
+  });
+
   it("死亡玩家只有一次遗书票", () => {
     const engine = GameEngine.create(makePlayers(7), { seed: 7, fixedRoles: ROLES_7 });
     autoNight(engine);

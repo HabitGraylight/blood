@@ -25,6 +25,8 @@ export class AIDebugLogger {
       task: entry.task || "",
       input: compact(entry.input),
       output: compact(entry.output),
+      // token 用量与 thinking 探测(input/output/cache 四项 + 非text块类型),用于成本统计与 maxTokens 校准
+      usage: entry.usage || null,
       error: compact(entry.error || "", 4000)
     };
 
